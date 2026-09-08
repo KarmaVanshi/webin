@@ -580,9 +580,14 @@ export class Webin {
    * disclose, so they save straight away as they always have. Anything read out of
    * somebody else's format had roles guessed from names, so it stops at a preview first.
    */
-  async #import(text, { name } = {}) {
+  async #import(text, { name, themeColor = null, origin = null } = {}) {
     const raw = String(text ?? '').trim();
-    if (!raw) { this.#panel.toast('error', 'Paste a share code or a theme file first.'); return; }
+    if (!raw) {
+      this.#panel.toast('error', origin
+        ? `${origin} has no styling Webin could read.`
+        : 'Paste a share code or a theme file first.');
+      return;
+    }
 
     const shareCode = isShareCode(raw);
     const decoded = shareCode ? await decodeShareCode(raw) : null;
@@ -593,8 +598,17 @@ export class Webin {
 
     const { themes, error, source, inferred } = parseThemeInput(raw, decoded, {
       name: name ?? titleCase(this.#host),
+      themeColor,
     });
-    if (error) { this.#panel.toast('error', error); return; }
+    if (error) {
+      // A failed paste and a failed website are different problems, and telling someone
+      // who typed an address to try pasting a base16 scheme helps nobody.
+      this.#panel.toast('error', origin
+        ? `Webin could not find a design on ${origin}. Sites that build their page after `
+          + 'it loads keep their colours out of reach.'
+        : error);
+      return;
+    }
 
     if (source !== 'webin') {
       this.#panel.setState({ view: 'preview', preview: { themes, source, inferred }, menuOpen: false });
@@ -648,7 +662,13 @@ export class Webin {
       this.#panel.toast('error', result?.reason ?? 'Webin could not fetch that address.');
       return;
     }
-    await this.#import(result.text, { name: titleCase(result.host ?? url.host) });
+    // `origin` is passed so a failure can be phrased in terms of the site. Someone who
+    // typed an address is not helped by being told to try pasting a base16 scheme.
+    await this.#import(result.text, {
+      name: titleCase(result.host ?? url.host),
+      themeColor: result.themeColor ?? null,
+      origin: result.host ?? url.host,
+    });
   }
 
   /**

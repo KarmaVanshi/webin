@@ -11,6 +11,7 @@
  */
 
 import { Msg } from '../shared/types.js';
+import { looksLikeHtml, readHtml, MAX_STYLESHEETS } from '../shared/website-theme.js';
 
 /** Pages where no extension content script can run — worth saying so plainly. */
 const RESTRICTED = /^(chrome|edge|about|devtools|view-source|chrome-extension|moz-extension):/i;
@@ -94,6 +95,25 @@ async function fetchTheme(rawUrl) {
     // only bound, and it is a bound on the fetch taking too long rather than on the file
     // being too large, so a big theme on a slow host is the case it is meant to catch.
     const text = await response.text();
+
+    // A web address usually answers with a page, and a page is not where a site keeps its
+    // design — it links to it. Importing "netflix.com" has to mean importing what
+    // netflix.com looks like, so the stylesheets it links are fetched too and handed on
+    // as one document. Without this step every site that keeps its CSS in a file — which
+    // is very nearly all of them — imports as no theme at all.
+    if (looksLikeHtml(text)) {
+      const page = readHtml(text, response.url);
+      const sheets = await fetchStylesheets(page.links.slice(0, MAX_STYLESHEETS), abort.signal);
+      return {
+        ok: true,
+        text: [page.css, ...sheets.map((sheet) => sheet.css)].join('\n'),
+        html: true,
+        sheets: sheets.length,
+        themeColor: page.themeColor,
+        url: response.url,
+        host: url.host,
+      };
+    }
     return { ok: true, text, url: response.url, host: url.host };
   } catch (error) {
     return {
@@ -103,6 +123,30 @@ async function fetchTheme(rawUrl) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Fetches a page's stylesheets, in parallel, and keeps whatever comes back.
+ *
+ * One sheet failing is not the import failing. A site serves its CSS from a CDN that may
+ * refuse a cross-origin request, be gone, or be slow, and any of those leaves the other
+ * eleven sheets perfectly readable — so a rejection here is dropped rather than raised.
+ *
+ * The abort signal is the page fetch's own, so the whole import stays inside one timeout
+ * instead of granting each sheet a fresh one.
+ */
+async function fetchStylesheets(links, signal) {
+  const results = await Promise.allSettled(links.map(async (href) => {
+    const response = await fetch(href, {
+      credentials: 'omit',
+      redirect: 'follow',
+      signal,
+      headers: { accept: 'text/css, */*;q=0.5' },
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    return { href, css: await response.text() };
+  }));
+  return results.filter((r) => r.status === 'fulfilled').map((r) => r.value);
 }
 
 /** The badge is a dot: this site is wearing a theme. */

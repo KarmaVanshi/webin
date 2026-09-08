@@ -202,14 +202,30 @@ a base16 scheme need different readers.
 **Choose a file.** `.json`, `.jsonc`, `.css`, `.txt`, `.yaml` and `.yml`. It is read in the browser;
 nothing is uploaded.
 
-**Fetch an address.** Type a URL and Webin goes and gets it — `example.com/theme.css` is
-enough, the scheme is filled in if you leave it off. The request is made by the extension's
-service worker rather than by the page you happen to be on, for two reasons: a page's own
-CSP governs fetches made from it, so half the web would refuse, and a request issued from
-the page's context is a request the page can watch. It carries `credentials: 'omit'`, so it
-cannot pull down a logged-in page using your own cookies; it gives up after 15 seconds; and
-it refuses anything that is not `http` or `https`. There is no size limit — whatever the
-address answers with is read, and the timeout is the only bound on how much that can be.
+**Fetch an address.** Type a URL and Webin goes and gets it. That can be a theme file —
+`example.com/theme.css` is enough, the scheme is filled in if you leave it off — or it can
+be **any website at all**: type `netflix.com` and you get Netflix's black and red, type
+`gov.uk` and you get its blue.
+
+Pointing at a site rather than a file matters more than it sounds, because a web page is
+not where a site keeps its design. It links to it. So when the address answers with a page,
+Webin reads that page for its `<style>` blocks, its `<meta name="theme-color">`, its
+presentational attributes, and the stylesheets it links — then fetches up to twelve of
+those too and reads the lot as one document. Without that second step nearly every site on
+the internet imports as no theme at all, because nearly every site keeps its CSS in a file.
+
+The request is made by the extension's service worker rather than by the page you happen to
+be on, for two reasons: a page's own CSP governs fetches made from it, so half the web would
+refuse, and a request issued from the page's context is a request the page can watch. It
+carries `credentials: 'omit'`, so it cannot pull down a logged-in page using your own
+cookies; it gives up after 15 seconds; and it refuses anything that is not `http` or
+`https`. There is no size limit — whatever the address answers with is read, and the
+timeout is the only bound on how much that can be. A stylesheet that fails is skipped
+rather than failing the import, since eleven of twelve is still a design.
+
+The sites this cannot reach are the ones that build their page after it loads, or that
+answer a plain request with a bot check. Those return an honest "could not find a design
+there" rather than a guess.
 
 ### Nothing is saved before you have seen it
 
@@ -341,6 +357,54 @@ Aliases are not resolved. A token whose value is `{color.blue.500}` or `var(--bl
 a reference rather than a colour and is skipped, so export a resolved file if your generator
 offers one.
 
+### Reading a website rather than a theme file
+
+A theme file is a document written to be a theme: `--primary` there is a promise about a
+role. An ordinary website promises nothing, and most of the web ships no design tokens
+whatsoever — Apple, the BBC, Hacker News and Craigslist have no `--background` to find. A
+reader that only knows tokens tells you those sites have no theme, which is plainly false,
+because they are sitting there being looked at.
+
+So a website is read by what it **paints**. Every colour declaration in its CSS is collected
+along with the selector that carried it, and the seven roles are settled on two kinds of
+evidence:
+
+- **Authority.** `body { background: #fff }` is not a colour the site happens to use, it is
+  the colour of the page. A short list of selectors carries that weight — `html`, `body`,
+  `:root`, and the usual framework mount points — and when one of them speaks it is believed
+  over any amount of counting.
+- **Frequency.** Failing that, a colour used by two hundred rules is the site's colour and a
+  colour used once is an accident. Counting declarations is a crude instrument that works
+  well, because a design system exists to make the same few colours appear over and over.
+
+Both readers run on every stylesheet, and the better answer wins — judged on whether the
+text is readable against the background, whether the background is opaque, and whether the
+palette is more than two colours wearing seven hats. GitHub's palette exists only as
+variables and Netflix's only as declarations; running both removes any need to know in
+advance which kind of document arrived.
+
+A few things that follow from reading what is painted:
+
+- **Colour is measured as channel spread, not HSL saturation.** HSL calls Stripe's near-black
+  navy a 78% saturated colour, which would make it the brand and its prose the accent.
+- **Backgrounds are flattened opaque.** Netflix paints its header `rgba(22, 22, 22, 0.7)`; a
+  theme background is the bottom of the stack with nothing behind it.
+- **Brand colours hide in gradients.** Stripe's indigo appears nowhere else in its CSS.
+- **A link painted in the body text colour is not an accent.** It is text.
+- **Body text is not a vivid colour.** Where the only readable candidates are saturated — a
+  site loading its real stylesheet from script, leaving only link colours visible — ink is
+  chosen for the background instead of importing the red.
+- **A page is a surface.** With no page-level rule to go on, a near-neutral candidate is
+  preferred over a vivid one, so a brand colour that happens to be everywhere does not
+  become the page.
+- **The pre-CSS web still counts.** `bgcolor`, `<body text>` and `<body link>` are
+  declarations, and are read as such. That is where Hacker News keeps its orange.
+- **One declaration is enough.** A page saying only `body { background: #eee }` has told you
+  the most important thing about how it looks; the rest derives as it would for any file.
+
+Page scripts are stripped before any of this. Inline JSON routinely contains CSS text and
+`style="…"` fragments, and a colour read out of a data blob is a colour the page never shows.
+
 ### How names become roles
 
 For CSS variables and design tokens the role has to come from the name, and names are the
@@ -378,9 +442,25 @@ imported shadcn theme grey — which is why `accent` is resolved late, after the
 unambiguous names have taken theirs. For the same reason `muted-foreground` is tested
 before `muted`, or a caption colour ends up as a panel fill.
 
-Before matching, prefixes that say nothing about a role are stripped, so `--color-primary`,
-`--theme-primary`, `--ui-primary` and `color.primary` are all read as `primary`. Dots,
-underscores and spaces all count as hyphens.
+Before matching, segments that say nothing about a role are stripped — and stripped
+wherever they appear, not only at the front. `--color-primary`, `--theme-primary`,
+`--ui-primary` and `color.primary` all read as `primary`, and GitHub's `--bgColor-default`
+reduces to `bg`: strip `color` only when it leads and that name never reduces at all, which
+is how the design system behind millions of pages imports as nothing. Trailing variant words
+go too, so `canvas-default` is the canvas. A name left with nothing keeps its original,
+rather than every such token collapsing to the empty string and colliding.
+
+Names carrying a **status** word — `danger`, `success`, `warning`, `attention`, `emphasis`
+and their like — are refused a role outright. This is what stops GitHub importing with a
+bright red page: `--bgColor-danger-emphasis` ends in the same word as `--bgColor-default`,
+and a loose tail match takes whichever it happens to meet first. Where two names are equally
+close, the one qualified by a usage word (`fg`, `bg`, `border`, `text`) wins over one
+qualified by a component name, so Primer's `--fgColor-accent` beats a stray
+`--testimonial-accent-color`.
+
+Finally, an accent that cannot be seen is not kept. GOV.UK names a white button on a white
+page: a real colour for a real button, and an accent that vanishes into the background. When
+that happens the next name in the role's list gets its turn.
 
 ### What a file leaves out
 
@@ -457,6 +537,7 @@ src/
   shared/
     theme-format.js         the file format, its validator, and the share codec
     foreign-themes.js       reading a theme some other tool wrote
+    website-theme.js        reading a theme off a website that never meant to ship one
     color.js                parsing, contrast, and the readability guarantee
     css-values.js           parsing, validating and formatting CSS values
   ui/

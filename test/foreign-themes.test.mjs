@@ -480,3 +480,88 @@ test('our own format still wins over every adapter', () => {
   assert.equal(source, 'webin');
   assert.equal(themes[0].name, 'Mine');
 });
+
+// ─── Design systems a real website ships ────────────────────────────────────
+
+/**
+ * GitHub Primer, in the shape GitHub actually serves it: one enormous `:root` block of
+ * namespaced tokens, the roles qualified by usage rather than named outright, and a full
+ * set of status colours sitting alongside them.
+ */
+const PRIMER = `
+  :root {
+    --bgColor-default: #ffffff;
+    --bgColor-muted: #f6f8fa;
+    --bgColor-danger-emphasis: #cf222e;
+    --bgColor-success-emphasis: #1f883d;
+    --bgColor-attention-muted: #fff8c5;
+    --fgColor-default: #1f2328;
+    --fgColor-muted: #59636e;
+    --fgColor-accent: #0969da;
+    --fgColor-danger: #d1242f;
+    --borderColor-default: #d1d9e0;
+  }
+`;
+
+test('a namespaced design system reads as the theme it is', () => {
+  // `--bgColor-default` is `bg` wearing a qualifier. Stripping `color` only when it leads
+  // means that name never reduces at all, and the system behind millions of pages imports
+  // as nothing.
+  const { themes, error, source } = importAll(PRIMER, 'GitHub');
+  assert.equal(error, null);
+  assert.equal(source, 'css-vars');
+
+  const { palette } = themes[0];
+  assert.equal(palette.background, '#ffffff');
+  assert.equal(palette.text, '#1f2328');
+  assert.equal(palette.accent, '#0969da');
+  assert.equal(palette.border, '#d1d9e0');
+  assert.equal(palette.textMuted, '#59636e');
+  assert.equal(palette.surface, '#f6f8fa');
+});
+
+test('a status colour is never mistaken for a role', () => {
+  // This is what stops GitHub importing with a bright red page: `--bgColor-danger-emphasis`
+  // ends in the same word as `--bgColor-default`, and a loose tail match takes whichever
+  // it happens to see first.
+  const { themes } = importAll(PRIMER, 'GitHub');
+  const used = Object.values(themes[0].palette);
+  for (const status of ['#cf222e', '#1f883d', '#fff8c5', '#d1242f']) {
+    assert.ok(!used.includes(status), `${status} is a status, not a role`);
+  }
+});
+
+test('a design system token beats one component’s decoration', () => {
+  // GitHub declares both of these. They end in the same word and only one of them is the
+  // accent of the site.
+  const css = `:root {
+    --testimonial-accent-color: #008000;
+    --bgColor-default: #ffffff;
+    --fgColor-default: #1f2328;
+    --fgColor-accent: #0969da;
+  }`;
+  const { themes } = importAll(css, 'GitHub');
+  assert.equal(themes[0].palette.accent, '#0969da');
+});
+
+test('an accent nobody could see is not kept', () => {
+  // GOV.UK names a white button on a white page. That is a real colour for a real button
+  // and an accent that vanishes into the background.
+  const css = `:root {
+    --background: #ffffff;
+    --foreground: #0b0c0c;
+    --button-background: #ffffff;
+  }`;
+  const { themes, inferred } = importAll(css, 'Gov');
+  assert.notEqual(themes[0].palette.accent, '#ffffff');
+  assert.ok(inferred.some((note) => /accent ←/.test(note)));
+});
+
+test('a name that is only noise keeps its own identity', () => {
+  // Stripping every meaningless segment from `--color-theme` would leave the empty string,
+  // and every such token would then collide with every other one.
+  const css = ':root { --color-theme: #123456; --background: #ffffff; --foreground: #111111 }';
+  const { themes, error } = importAll(css, 'Odd');
+  assert.equal(error, null);
+  assert.equal(themes[0].palette.background, '#ffffff');
+});

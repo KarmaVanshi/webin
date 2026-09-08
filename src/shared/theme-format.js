@@ -219,7 +219,7 @@ export function collectionToFile(themes) {
  *
  * @returns {{themes:Theme[], error:string|null, source:string, inferred:string[]}}
  */
-export function parseThemeInput(input, decoded = null, { name = 'Imported theme' } = {}) {
+export function parseThemeInput(input, decoded = null, { name = 'Imported theme', themeColor = null } = {}) {
   const text = String(input ?? '').trim();
   const raw = decoded ?? tryJson(text);
 
@@ -229,7 +229,7 @@ export function parseThemeInput(input, decoded = null, { name = 'Imported theme'
     if (themes.length) return { themes, error: null, source: 'webin', inferred: [] };
   }
 
-  const foreign = adaptForeignThemes(text, { name });
+  const foreign = adaptForeignThemes(text, { name, themeColor });
   if (foreign) {
     const themes = foreign.themes.map((candidate) => normaliseTheme(candidate)).filter(Boolean);
     if (themes.length) {
@@ -244,7 +244,7 @@ export function parseThemeInput(input, decoded = null, { name = 'Imported theme'
   return {
     ...empty,
     error: 'Webin could not read that. Paste a share code, a .webin.json file, a CSS :root block, '
-      + 'a VS Code theme, or a base16 scheme.',
+      + 'a VS Code theme, a base16 scheme — or the address of a website to take its design from.',
   };
 }
 

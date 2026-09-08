@@ -21,6 +21,7 @@
  */
 
 import { parseColor, toCss, luminance, contrastRatio, flatten, isTransparent } from './color.js';
+import { looksLikeHtml, readHtml, themeFromWebsite } from './website-theme.js';
 
 /** Roles a theme needs, in the order the adapters try to fill them. */
 const ROLES = ['background', 'surface', 'text', 'textMuted', 'accent', 'onAccent', 'border'];
@@ -36,7 +37,8 @@ const ROLES = ['background', 'surface', 'text', 'textMuted', 'accent', 'onAccent
 const ROLE_NAMES = {
   textMuted: [
     'muted-foreground', 'mutedforeground', 'text-muted', 'text-secondary', 'foreground-muted',
-    'fg-muted', 'neutral-content', 'base-content-secondary', 'description', 'text-dim',
+    'fg-muted', 'muted-fg', 'fg-subtle', 'text-subtle', 'foreground-secondary', 'fg-secondary',
+    'neutral-content', 'base-content-secondary', 'description', 'text-dim',
     'subtle', 'text-tertiary', 'on-surface-variant', 'nc',
   ],
   onAccent: [
@@ -68,6 +70,53 @@ const ROLE_NAMES = {
 /** Prefixes a token name may carry that say nothing about its role. */
 const NOISE_PREFIX = /^(--)?(color|colors|colour|theme|clr|palette|token|tokens|ui)[-.]/;
 
+/**
+ * Segments that say nothing about a role wherever they appear.
+ *
+ * GitHub's Primer writes `--bgColor-default`, which normalises to `bg-color-default`.
+ * Stripping `color` only when it leads means that name never reduces to `bg`, and a
+ * design system used by millions of pages imports as nothing. The word is noise in the
+ * middle of a name for exactly the reason it is noise at the front of one.
+ */
+const NOISE_SEGMENT = /^(color|colors|colour|colours|clr|theme|palette|token|tokens|ui|css|var|global|semantic|scale)$/;
+
+/**
+ * Trailing words that name a variant of a role rather than a role.
+ *
+ * `bg-default` and `bg` are the same token; `canvas-default` is the canvas. Stripped from
+ * the end only — `base-100` keeps its `100`, which is what tells daisyUI's surfaces apart.
+ */
+const VARIANT_SUFFIX = /^(default|rest|normal|regular|base|solid|plain|main|std|standard|1|100|light)$/;
+
+/**
+ * Words that make a token a *state* rather than a role.
+ *
+ * This is what stops GitHub importing with a bright red page. Primer ships
+ * `--bgColor-danger-emphasis` alongside `--bgColor-default`, and a loose tail match reads
+ * the first one it happens to see whose name ends in `bg`. A danger colour is never the
+ * background of a page, a success colour is never its text, and a name carrying one of
+ * these words is describing a status, not a surface.
+ */
+/**
+ * Segments that qualify a role by where it is used rather than by what it is.
+ *
+ * These separate a design system's tokens from a single component's decoration. GitHub
+ * declares both `--fgColor-accent` and `--testimonial-accent-color`; the two end in the
+ * same word and only one of them is the site's accent. A token qualified by `fg` or `bg`
+ * is describing the role generally, so it is preferred over one qualified by the name of
+ * whatever happened to need a colour that day.
+ */
+const USAGE_PREFIX = /^(fg|bg|foreground|background|text|border|surface|fill|stroke|ink|on|content)$/;
+
+const STATE_SEGMENT = new Set([
+  'danger', 'error', 'critical', 'warning', 'caution', 'success', 'positive', 'negative',
+  'attention', 'severe', 'info', 'notice', 'done', 'closed', 'merged', 'draft', 'sponsors',
+  'upsell', 'premium', 'promo', 'sale', 'new', 'beta', 'hover', 'active', 'focus', 'pressed',
+  'disabled', 'visited', 'selected', 'checked', 'invalid', 'required', 'placeholder',
+  'inverse', 'inverted', 'emphasis', 'overlay', 'shadow', 'scrollbar', 'skeleton', 'tooltip',
+  'badge', 'toast', 'alert', 'highlight', 'syntax', 'diff', 'graph', 'avatar', 'logo', 'ad',
+]);
+
 /** Normalises `--color-base-100` and `color.base.100` to the same thing. */
 function normaliseName(raw) {
   // `--PanelForeground` and `--panel-foreground` are one name written two ways, and real
@@ -83,7 +132,24 @@ function normaliseName(raw) {
     previous = name;
     name = name.replace(NOISE_PREFIX, '');
   } while (name !== previous);
-  return name.replace(/^-+|-+$/g, '');
+  name = name.replace(/^-+|-+$/g, '');
+
+  // A name reduced to nothing by segment-stripping was only ever noise, so the original
+  // stands rather than becoming the empty string and colliding with every other one.
+  const kept = name.split('-').filter((segment) => segment && !NOISE_SEGMENT.test(segment));
+  return kept.length ? kept.join('-') : name;
+}
+
+/** True for a token naming a status rather than a role. */
+function namesAState(name) {
+  return name.split('-').some((segment) => STATE_SEGMENT.has(segment));
+}
+
+/** `bg-default` -> `bg`. The role a variant is a variant of. */
+function withoutVariant(name) {
+  const segments = name.split('-');
+  while (segments.length > 1 && VARIANT_SUFFIX.test(segments[segments.length - 1])) segments.pop();
+  return segments.join('-');
 }
 
 /**
@@ -207,7 +273,18 @@ export function sniffFormat(text) {
   if (json !== undefined) return sniffJson(json);
 
   if (/base0[0-9a-f]\s*:/i.test(raw)) return 'base16';
+
+  // A web page is checked before the stylesheet formats, not after. A page routinely
+  // contains a `--var: value` somewhere in its inline styles, and reading the whole
+  // document as a stylesheet on the strength of that is how a site's markup gets parsed
+  // as a palette. A page is a page; its CSS is fetched and read separately.
+  if (looksLikeHtml(raw)) return 'html';
+
   if (/--[\w-]+\s*:/.test(raw) || /@plugin\s+["']daisyui/.test(raw)) return 'css-vars';
+
+  // A plain stylesheet with no custom properties at all is still a design — most of the
+  // web is exactly that — so it goes to the reader that looks at what is painted.
+  if (/\{[^{}]*\b(color|background|background-color)\s*:/i.test(raw)) return 'stylesheet';
   return null;
 }
 
@@ -284,6 +361,22 @@ function flattenTokens(node, path = [], out = []) {
  * Roles are resolved in `ROLE_NAMES` key order so the specific ones claim their names
  * before the general ones get a chance.
  */
+/**
+ * Whether a colour can do the job of the role it was read for.
+ *
+ * Only the accent is checked, and only against a background already known. A theme file
+ * naming a white `--button-background` on a white page — GOV.UK does — has named a real
+ * colour for a real button, and an accent nobody can see. Rejecting it here lets the next
+ * name in the role's list have its turn instead of the palette keeping an invisible one.
+ */
+function roleUsable(role, colour, palette) {
+  if (role !== 'accent' || !palette.background) return true;
+  const front = parseColor(colour);
+  const behind = parseColor(palette.background);
+  if (!front || !behind) return true;
+  return contrastRatio(flatten(front, behind), behind) >= ACCENT_MIN_CONTRAST;
+}
+
 function inferRoles(pairs) {
   const byName = new Map();
   for (const [rawName, rawValue] of pairs) {
@@ -299,14 +392,24 @@ function inferRoles(pairs) {
   const inferred = [];
   const claimed = new Set();
 
+  // Names indexed twice: as written, and with any trailing variant word removed, so
+  // `--bgColor-default` answers to `bg` without `--bg` losing its priority over it.
+  const byRoleName = new Map();
+  for (const [name, colour] of byName) {
+    if (namesAState(name)) continue;
+    if (!byRoleName.has(name)) byRoleName.set(name, { colour, name });
+    const stem = withoutVariant(name);
+    if (stem !== name && !byRoleName.has(stem)) byRoleName.set(stem, { colour, name });
+  }
+
   for (const role of Object.keys(ROLE_NAMES)) {
     for (const candidate of ROLE_NAMES[role]) {
-      if (claimed.has(candidate)) continue;
-      const colour = byName.get(candidate);
-      if (!colour) continue;
-      palette[role] = colour;
+      const hit = byRoleName.get(candidate);
+      if (!hit || claimed.has(hit.name) || !roleUsable(role, hit.colour, palette)) continue;
+      palette[role] = hit.colour;
+      claimed.add(hit.name);
       claimed.add(candidate);
-      inferred.push(`${role} ← --${candidate}`);
+      inferred.push(`${role} ← --${hit.name}`);
       break;
     }
   }
@@ -332,18 +435,29 @@ function inferRoles(pairs) {
   // bare word `surface` can claim it as a panel.
   const found = new Map();
   for (const [name, colour] of byName) {
-    const segments = name.split('-').filter(Boolean);
+    // A status colour is not a role, however its name ends. Without this the first
+    // `--bgColor-danger-emphasis` in the file becomes the page background.
+    if (namesAState(name) || claimed.has(name)) continue;
+    const segments = withoutVariant(name).split('-').filter(Boolean);
     for (let start = 0; start < segments.length; start += 1) {
       const tail = segments.slice(start).join('-');
       const role = roleOfName.get(tail);
       if (!role) continue;
-      if (!found.has(role) && !claimed.has(tail)) found.set(role, { colour, tail });
+      // Fewer discarded leading segments is a closer match, so `bg` beats `button-bg`
+      // for the page background regardless of which the file happens to list first. Where
+      // two names are equally close, the one qualified by a usage word wins.
+      const usage = start > 0 && USAGE_PREFIX.test(segments[start - 1]) ? 0 : 1;
+      const previous = found.get(role);
+      const better = !previous || start < previous.distance
+        || (start === previous.distance && usage < previous.usage);
+      if (better && !claimed.has(tail)) found.set(role, { colour, tail, distance: start, usage });
       break;
     }
   }
   for (const role of Object.keys(ROLE_NAMES)) {
     if (palette[role] || !found.has(role)) continue;
     const { colour, tail } = found.get(role);
+    if (!roleUsable(role, colour, palette)) continue;
     palette[role] = colour;
     claimed.add(tail);
     inferred.push(`${role} ← a name ending in ${tail}`);
@@ -369,6 +483,9 @@ function completePalette(palette, inferred) {
 
   const dark = luminance(parseColor(palette.background)) < 0.35;
 
+  // Last line of defence: an accent that vanishes into the page is not one, however it
+  // was arrived at.
+  if (has('accent') && !roleUsable('accent', palette.accent, palette)) delete palette.accent;
   if (!has('accent')) { palette.accent = palette.text; note('accent', 'text, for want of a brand colour'); }
   if (!has('textMuted')) {
     // Halfway between the text and its background is what a caption is, near enough.
@@ -396,6 +513,45 @@ function mixCss(a, b, t) {
   if (!from || !to) return a;
   const at = (k) => Math.round(from[k] + (to[k] - from[k]) * t);
   return toCss({ r: at('r'), g: at('g'), b: at('b'), a: 1 });
+}
+
+/**
+ * How well a candidate reads as a theme somebody designed.
+ *
+ * Two readers can both produce a palette from the same website and only one of them be
+ * right, so there has to be a way to tell. Rather than guessing per site which reader to
+ * trust, both run and the better answer wins — and "better" is decided on the properties
+ * a real palette has, none of which depend on where it came from.
+ */
+function paletteQuality(theme) {
+  const background = parseColor(theme?.palette?.background);
+  const text = parseColor(theme?.palette?.text);
+  if (!background || !text) return -Infinity;
+
+  // Readable body text is the strongest evidence a palette was read rather than
+  // assembled: unrelated colours pulled from one stylesheet rarely contrast.
+  let score = Math.min(contrastRatio(flatten(text, background), background), 21);
+
+  // A translucent background is not a background. It is a colour that was sitting on top
+  // of one, read as though nothing were underneath.
+  if (background.a < 0.99) score -= 12;
+
+  const accent = parseColor(theme.palette.accent);
+  if (accent && toCss(accent) !== toCss(text)) score += 4;
+
+  // A palette that collapsed to two or three colours is mostly derivation.
+  score += new Set(Object.values(theme.palette).map((value) => String(value).toLowerCase())).size;
+  return score;
+}
+
+/** The better of two readings of the same document, or whichever one exists. */
+function betterOf(a, b) {
+  if (!a?.themes?.length) return b?.themes?.length ? b : null;
+  if (!b?.themes?.length) return a;
+  const rate = (result) => Math.max(...result.themes.map(paletteQuality))
+    // A reader that found the site's light *and* dark themes understood more of it.
+    + (result.themes.length > 1 ? 1 : 0);
+  return rate(b) > rate(a) ? b : a;
 }
 
 /** Turns an inferred palette into a candidate object for `normaliseTheme`. */
@@ -644,11 +800,12 @@ function fromDesignTokens(json, name) {
  * Reads a theme file some other tool wrote.
  *
  * @param {string} text the pasted or dropped file
- * @param {{name?: string}} options a fallback name, usually from the filename or host
+ * @param {{name?: string, themeColor?: string|null}} options a fallback name, usually from
+ *   the filename or host, and the `<meta name="theme-color">` of the page it came from
  * @returns {{source: string, themes: object[], inferred: string[]}|null} candidates for
  *   `normaliseTheme` — never validated themes, and never to be used without it
  */
-export function adaptForeignThemes(text, { name = 'Imported theme' } = {}) {
+export function adaptForeignThemes(text, { name = 'Imported theme', themeColor = null } = {}) {
   const raw = String(text ?? '').trim();
   if (!raw) return null;
   const format = sniffFormat(raw);
@@ -661,7 +818,39 @@ export function adaptForeignThemes(text, { name = 'Imported theme' } = {}) {
     case 'base16': return fromBase16(json ?? raw, name);
     case 'terminal': return fromTerminal(json, name);
     case 'dtcg': return fromDesignTokens(json, name);
-    case 'css-vars': return fromCssVariables(json ?? raw, name);
+    case 'css-vars': return readStyles(json ?? raw, name, themeColor);
+    case 'stylesheet': return themeFromWebsite(raw, { name, themeColor });
+    case 'html': return fromHtml(raw, name, themeColor);
     default: return null;
   }
 }
+
+/**
+ * A stylesheet, read both ways.
+ *
+ * A file of custom properties is a theme written down, and a file of rules is a theme
+ * being used, and plenty of stylesheets are both. GitHub's palette exists only as
+ * variables; Netflix's exists only as declarations. Running both readers and keeping the
+ * better answer removes the need to know in advance which kind of file arrived.
+ */
+function readStyles(source, name, themeColor) {
+  const tokens = fromCssVariables(source, name);
+  if (typeof source !== 'string') return tokens;
+  return betterOf(tokens, themeFromWebsite(source, { name, themeColor }));
+}
+
+/**
+ * A whole web page.
+ *
+ * What the page carries inline is usually a fraction of its design — the rest is in the
+ * stylesheets it links, which only the service worker can fetch. So this reads what is
+ * there and the caller decides whether to go and get the rest; either way the page is
+ * never handed to the token readers as raw markup, which would parse its HTML as
+ * declarations.
+ */
+function fromHtml(raw, name, themeColor) {
+  const page = readHtml(raw);
+  if (!page.css.trim()) return null;
+  return readStyles(page.css, name, themeColor ?? page.themeColor);
+}
+

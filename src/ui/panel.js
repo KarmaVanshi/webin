@@ -415,7 +415,7 @@ function importSheet() {
   <label class="wb-label" for="wb-import-url">Or fetch one from a web address</label>
   <div class="wb-row">
     <input class="wb-input wb-input--line" id="wb-import-url" type="url" spellcheck="false"
-      autocomplete="off" placeholder="https://example.com/theme.css">
+      autocomplete="off" placeholder="netflix.com — or any theme file">
     <button type="button" class="wb-btn" data-action="import-url">Fetch</button>
   </div>
   <p class="wb-hint">Fetching is the one thing Webin does over the network, it happens only when

@@ -20,7 +20,7 @@
  *      their back is not.
  */
 
-import { parseColor, toCss, luminance, contrastRatio, flatten } from './color.js';
+import { parseColor, toCss, luminance, contrastRatio, flatten, isTransparent } from './color.js';
 
 /** Roles a theme needs, in the order the adapters try to fill them. */
 const ROLES = ['background', 'surface', 'text', 'textMuted', 'accent', 'onAccent', 'border'];
@@ -56,7 +56,8 @@ const ROLE_NAMES = {
     'on-background', 'on-surface', 'text-primary', 'editor-foreground', 'bc',
   ],
   accent: [
-    'primary', 'brand', 'accent', 'link', 'interactive', 'action', 'p', 'a',
+    'primary', 'brand', 'accent', 'link', 'interactive', 'action',
+    'button-surface', 'button-background', 'button-bg', 'p', 'a',
   ],
   border: [
     'border', 'outline', 'divider', 'base-300', 'base300', 'rule', 'stroke', 'separator',
@@ -69,7 +70,13 @@ const NOISE_PREFIX = /^(--)?(color|colors|colour|theme|clr|palette|token|tokens|
 
 /** Normalises `--color-base-100` and `color.base.100` to the same thing. */
 function normaliseName(raw) {
-  let name = String(raw ?? '').trim().toLowerCase().replace(/[._\s]+/g, '-');
+  // `--PanelForeground` and `--panel-foreground` are one name written two ways, and real
+  // design systems mix both — Netflix ships `Accordion-HeadlineForeground`. Splitting the
+  // camel humps before lowercasing means a compound word is read as its parts.
+  let name = String(raw ?? '').trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .toLowerCase()
+    .replace(/[._\s]+/g, '-');
   name = name.replace(/^-+/, '');
   let previous;
   do {
@@ -281,7 +288,9 @@ function inferRoles(pairs) {
   const byName = new Map();
   for (const [rawName, rawValue] of pairs) {
     const colour = readColorValue(rawValue);
-    if (!colour) continue;
+    // `transparent` is a real CSS value and a real declaration, but it names no colour, so
+    // a role filled from one would be a role that is not filled at all.
+    if (!colour || isTransparent(colour)) continue;
     const name = normaliseName(rawName);
     if (!byName.has(name)) byName.set(name, colour);
   }
@@ -300,6 +309,44 @@ function inferRoles(pairs) {
       inferred.push(`${role} ← --${candidate}`);
       break;
     }
+  }
+
+  // Second pass, for the roles the first one could not fill. A real site's design system
+  // namespaces everything — Netflix ships `--hcw--local-design--Button-Surface` — so an
+  // exact match finds nothing at all and the page imports as no theme rather than as the
+  // theme it plainly is. Here a name counts if one of its trailing segments is a name we
+  // know, longest tail first, so `button-foreground` is still read as the label on a
+  // button before `foreground` is read as body text.
+  //
+  // This runs second on purpose. Exact names always win, which is what keeps
+  // `--primary-foreground` from being claimed as the accent.
+  const roleOfName = new Map();
+  for (const role of Object.keys(ROLE_NAMES)) {
+    for (const candidate of ROLE_NAMES[role]) {
+      if (!roleOfName.has(candidate)) roleOfName.set(candidate, role);
+    }
+  }
+
+  // Each variable is resolved by its *longest* recognisable tail rather than by role
+  // order, so `Button-Surface` is read as a button fill — a brand colour — before the
+  // bare word `surface` can claim it as a panel.
+  const found = new Map();
+  for (const [name, colour] of byName) {
+    const segments = name.split('-').filter(Boolean);
+    for (let start = 0; start < segments.length; start += 1) {
+      const tail = segments.slice(start).join('-');
+      const role = roleOfName.get(tail);
+      if (!role) continue;
+      if (!found.has(role) && !claimed.has(tail)) found.set(role, { colour, tail });
+      break;
+    }
+  }
+  for (const role of Object.keys(ROLE_NAMES)) {
+    if (palette[role] || !found.has(role)) continue;
+    const { colour, tail } = found.get(role);
+    palette[role] = colour;
+    claimed.add(tail);
+    inferred.push(`${role} ← a name ending in ${tail}`);
   }
   return { palette, inferred, byName };
 }

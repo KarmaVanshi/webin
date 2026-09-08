@@ -10,7 +10,7 @@ it to a friend as a single line of text.
 ```
 Load it:   chrome://extensions → Developer mode → Load unpacked → this folder
 Open it:   click the toolbar icon, or Alt+Shift+E
-Test it:   npm test          (160 tests, jsdom)
+Test it:   npm test          (163 tests, jsdom)
 Prove it:  npm run verify    (real Chromium, local fixture + youtube.com)
 ```
 
@@ -340,9 +340,9 @@ offers one.
 For CSS variables and design tokens the role has to come from the name, and names are the
 least trustworthy part of any theme file. Two rules keep it honest.
 
-Matching is **exact**, never a substring, which is what stops `--primary-foreground` being
-read as the accent. And roles claim names in a fixed order, most specific first, each name
-going to whichever role asks for it earliest:
+Matching is **exact** first, never a substring, which is what stops `--primary-foreground`
+being read as the accent. Roles claim names in a fixed order, most specific first, each
+name going to whichever role asks for it earliest:
 
 | Role | Names, in the order they are tried |
 |---|---|
@@ -351,8 +351,20 @@ going to whichever role asks for it earliest:
 | background | `background` · `bg` · `base-100` · `canvas` · `page` · `body-bg` · `backdrop` · `surface-0` · `editor-background` · `b1` |
 | surface | `card` · `popover` · `panel` · `surface` · `base-200` · `elevated` · `muted` · `secondary` · `surface-1` · `sidebar-background` · `b2` |
 | text | `foreground` · `text` · `base-content` · `fg` · `ink` · `body-color` · `on-background` · `on-surface` · `text-primary` · `editor-foreground` · `bc` |
-| accent | `primary` · `brand` · `accent` · `link` · `interactive` · `action` · `p` · `a` |
+| accent | `primary` · `brand` · `accent` · `link` · `interactive` · `action` · `button-surface` · `button-background` · `button-bg` · `p` · `a` |
 | border | `border` · `outline` · `divider` · `base-300` · `rule` · `stroke` · `separator` · `border-color` · `b3` |
+
+Then a second pass, for whatever the first one could not fill. A real site namespaces
+everything — Netflix ships `--hcw--local-design--Button-Surface` — so exact matching finds
+nothing at all and the page imports as no theme rather than as the theme it plainly is. In
+this pass a name counts if one of its **trailing segments** is a name from the table, and
+each variable is resolved by its longest recognisable tail, so `Button-Surface` is read as
+a button fill before the bare word `surface` can claim it as a panel. Camel humps are split
+first, so `Accordion-HeadlineForeground` is read as the three words it is. Because this
+pass runs second and only fills what is still empty, an exact name always wins.
+
+A value of `transparent` never fills a role. It is a real declaration, but it names no
+colour, so the role is derived instead.
 
 That order is the whole design. In shadcn `--primary` is the brand and `--accent` is a
 muted hover fill, so taking the one actually named "accent" at face value would turn every
@@ -447,7 +459,7 @@ src/
     controls.js             the control library the inspector is built from
   storage/                  chrome.storage behind a plain key/value interface
 
-test/        160 tests — format, library, engine, store, panel, identity, editor, journeys
+test/        163 tests — format, library, engine, store, panel, identity, editor, journeys
 tools/       browser.mjs (a small CDP client) and verify.mjs (the real-browser checks)
 fixtures/    a page built the awkward way: custom properties, shadow roots, pushState
 attic/       the previous build, kept for reference; the editor above was rebuilt from it
@@ -457,7 +469,7 @@ attic/       the previous build, kept for reference; the editor above was rebuil
 
 ## Verification
 
-`npm test` runs 160 tests in jsdom, including end-to-end journeys that drive the real panel
+`npm test` runs 163 tests in jsdom, including end-to-end journeys that drive the real panel
 controls: apply a theme, reload and find it still there, import a friend's share code,
 capture a page, delete a theme, edit an element and find the edit again after a reload, and
 hand the panel a hostile theme to see it stay intact.

@@ -287,6 +287,55 @@ test('a workable accent is still taken from the button, as before', () => {
   assert.equal(palette.onAccent, '#ffffff');
 });
 
+// ─── Namespaced design systems ──────────────────────────────────────────────
+
+// What a real site ships. Netflix's tokens all sit under `--hcw--local-design--`, so an
+// exact-name match finds nothing and the page used to import as no theme at all.
+const NAMESPACED = `:root {
+  --hcw--local-design--Page-Background: #141414;
+  --hcw--local-design--Accordion-PanelForeground: #ffffff;
+  --hcw--local-design--Button-Surface: #e50914;
+  --hcw--local-design--Button-Foreground: #ffffff;
+  --hcw--local-design--Input-Border: #808080;
+  --hcw--focus-ring--color: transparent;
+}`;
+
+test('a namespaced design system is read from the tail of its names', () => {
+  const { themes, error } = importAll(NAMESPACED, 'Netflix');
+  assert.equal(error, null);
+  const { palette } = themes[0];
+  assert.equal(palette.background, '#141414');
+  assert.equal(palette.text, '#ffffff');
+  assert.equal(palette.accent, '#e50914', 'a button fill is a brand colour, not a panel');
+  assert.equal(palette.border, '#808080');
+});
+
+test('an exact name still beats a tail match', () => {
+  // The reason the tail pass runs second: `--primary-foreground` is the label on the
+  // accent, and must not be claimed as the accent itself.
+  const source = `:root {
+    --background: #ffffff;
+    --foreground: #111111;
+    --primary: #3366ff;
+    --primary-foreground: #ffffff;
+    --some-vendor--Button-Surface: #ff0000;
+  }`;
+  const { palette } = importAll(source).themes[0];
+  assert.equal(palette.accent, '#3366ff', 'the exact --primary wins');
+  assert.equal(palette.onAccent, '#ffffff');
+});
+
+test('a transparent value does not fill a role', () => {
+  const source = `:root {
+    --background: #101010;
+    --foreground: #f0f0f0;
+    --border: transparent;
+  }`;
+  const { palette, } = importAll(source).themes[0];
+  assert.notEqual(palette.border, 'transparent');
+  assert.ok(palette.border, 'it is derived instead');
+});
+
 // ─── base16 ─────────────────────────────────────────────────────────────────
 
 test('a base16 scheme maps by position, with nothing left to guess', () => {

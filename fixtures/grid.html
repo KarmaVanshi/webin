@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CSS Grid — fixture</title><link rel="stylesheet" href="fixtures.css"></head><body>
+<header class="site"><h1>CSS Grid</h1><nav><ul><li><a href="index.html">All fixtures</a></li></ul></nav></header>
+<main><p style="color:var(--muted)">Explicit tracks, spanning items and nested grids — the drag-between-tracks case.</p>
+<h2>Three columns</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+<div class="card"><h3>A</h3><p>Column 1</p></div>
+<div class="card"><h3>B</h3><p>Column 2</p></div>
+<div class="card"><h3>C</h3><p>Column 3</p></div>
+<div class="card" style="grid-column:1 / 3"><h3>D</h3><p>Spans two columns</p></div>
+<div class="card"><h3>E</h3><p>Column 3</p></div></div>
+<h2>Fixed and fluid tracks</h2>
+<div style="display:grid;grid-template-columns:200px 1fr 120px;grid-template-rows:auto auto;gap:12px">
+<div class="card"><h3>Fixed 200</h3><p>Track 1</p></div>
+<div class="card"><h3>Fluid</h3><p>Track 2</p></div>
+<div class="card"><h3>Fixed 120</h3><p>Track 3</p></div></div>
+</main><footer class="site">Local fixture page. Not a real site.</footer></body></html>

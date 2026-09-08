@@ -1,0 +1,19 @@
+{
+  "name": "webin",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Re-theme any website in one click. Eighteen designs built in, plus your own — import, export and share themes with friends.",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "verify": "node tools/verify.mjs",
+    "verify:local": "node tools/verify.mjs --no-network",
+    "verify:watch": "node tools/verify.mjs --headful",
+    "fixtures": "node fixtures/serve.mjs",
+    "icons": "node tools/make-icons.mjs",
+    "zip": "rm -f webin.zip && zip -r webin.zip manifest.json src icons -x '*.DS_Store'"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0"
+  }
+}

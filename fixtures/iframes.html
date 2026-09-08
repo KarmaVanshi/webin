@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Iframes — fixture</title><link rel="stylesheet" href="fixtures.css"></head><body>
+<header class="site"><h1>Iframes</h1><nav><ul><li><a href="index.html">All fixtures</a></li></ul></nav></header>
+<main><p style="color:var(--muted)">A same-origin frame and a sandboxed one — the extension must not pretend it can reach both.</p>
+<h2>Same-origin iframe</h2>
+<iframe src="simple.html" width="100%" height="260" style="border:1px solid var(--line);border-radius:8px" title="Same-origin fixture"></iframe>
+<h2>Sandboxed iframe</h2>
+<iframe sandbox width="100%" height="140" style="border:1px solid var(--line);border-radius:8px" title="Sandboxed frame"
+ srcdoc="<p style='font:16px system-ui;padding:16px'>Sandboxed content.</p>"></iframe>
+</main><footer class="site">Local fixture page. Not a real site.</footer></body></html>

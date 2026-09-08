@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SPA routing — fixture</title><link rel="stylesheet" href="fixtures.css"></head><body>
+<header class="site"><h1>SPA routing</h1><nav><ul><li><a href="index.html">All fixtures</a></li></ul></nav></header>
+<main><p style="color:var(--muted)">History API navigation with no reload — page scope must follow the route.</p>
+<h2>Client-side routes</h2>
+<nav><ul style="gap:12px">
+<li><a href="/spa/home" data-route>Home</a></li>
+<li><a href="/spa/products" data-route>Products</a></li>
+<li><a href="/spa/settings" data-route>Settings</a></li></ul></nav>
+<section id="view" style="margin-top:24px"></section>
+<script>
+const views = {
+  '/spa/home': '<h3>Home</h3><p>The landing route.</p>',
+  '/spa/products': '<h3>Products</h3><div class="card"><h3>Product card</h3><p>Only on this route.</p></div>',
+  '/spa/settings': '<h3>Settings</h3><p>A different route with different content.</p>',
+};
+function render() {
+  document.getElementById('view').innerHTML = views[location.pathname] ?? views['/spa/home'];
+}
+for (const link of document.querySelectorAll('[data-route]')) {
+  link.addEventListener('click', (e) => { e.preventDefault(); history.pushState({}, '', link.getAttribute('href')); render(); });
+}
+addEventListener('popstate', render);
+render();
+</script>
+</main><footer class="site">Local fixture page. Not a real site.</footer></body></html>

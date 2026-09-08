@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Web Interface DevTools</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="head">
+    <span class="dot" aria-hidden="true"></span>
+    <h1>Web Interface DevTools</h1>
+  </header>
+
+  <p class="scope" id="scope" title="Current page">—</p>
+
+  <div class="modes" role="radiogroup" aria-label="Editor mode">
+    <button type="button" class="mode" data-mode="inspect" role="radio" aria-checked="false">Inspect</button>
+    <button type="button" class="mode" data-mode="design" role="radio" aria-checked="false">Design</button>
+    <button type="button" class="mode" data-mode="off" role="radio" aria-checked="true">Off</button>
+  </div>
+
+  <dl class="stats">
+    <div><dt>Saved changes</dt><dd id="change-count">0</dd></div>
+    <div><dt>Theme</dt><dd id="theme-name">None</dd></div>
+  </dl>
+
+  <p class="warn" id="warn" hidden></p>
+
+  <div class="actions">
+    <button type="button" class="btn primary" id="save">Save changes</button>
+    <button type="button" class="btn" id="undo">Undo</button>
+  </div>
+
+  <div class="section">
+    <label class="label" for="theme">Theme</label>
+    <div class="row">
+      <select id="theme" aria-label="Page theme"></select>
+    </div>
+  </div>
+
+  <div class="section">
+    <label class="label" for="profile">Profile</label>
+    <div class="row">
+      <select id="profile" aria-label="Active profile"></select>
+      <button type="button" class="btn icon" id="new-profile" title="New profile" aria-label="New profile">+</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <label class="label" for="export">Backup</label>
+    <div class="row">
+      <button type="button" class="btn" id="export">Export</button>
+      <button type="button" class="btn" id="import">Import</button>
+      <input type="file" id="file" accept="application/json" hidden>
+    </div>
+  </div>
+
+  <div class="danger-zone">
+    <!-- Two-step confirmation: a native confirm() dialog is unreliable inside an
+         extension popup, which loses focus and closes as the dialog opens. -->
+    <button type="button" class="btn danger" id="reset-page"><span>Reset this page</span></button>
+    <button type="button" class="btn danger" id="reset-site"><span>Reset whole site</span></button>
+  </div>
+
+  <p class="foot">Changes are stored locally. The website itself is never modified.</p>
+  <p class="status" id="status" role="status" aria-live="polite"></p>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

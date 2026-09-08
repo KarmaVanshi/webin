@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Component site — Webin fixture</title>
+<!--
+  A deliberately awkward page, shaped like the sites this extension has to survive:
+  everything is painted from custom properties, the real UI lives inside open shadow
+  roots, navigation happens with pushState, and content arrives after load.
+-->
+<style>
+  :root {
+    --site-bg: #ffffff;
+    --site-surface: #f2f2f2;
+    --site-text: #0f0f0f;
+    --site-text-dim: #606060;
+    --site-brand: #1a73e8;
+    --site-line: #e5e5e5;
+    --site-scrim: rgba(0, 0, 0, 0.4);
+    --site-radius: 4px;
+  }
+  html, body { margin: 0; background: var(--site-bg); color: var(--site-text); }
+  body { font: 15px/1.5 system-ui, sans-serif; }
+  header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 12px 20px; background: var(--site-surface);
+    border-bottom: 1px solid var(--site-line);
+  }
+  h1 { font-size: 18px; margin: 0; }
+  nav a { color: var(--site-brand); margin-right: 12px; text-decoration: none; }
+  main { padding: 20px; display: grid; gap: 16px; grid-template-columns: repeat(3, 1fr); }
+  .cta {
+    background: var(--site-brand); color: #ffffff; border: 0;
+    padding: 10px 18px; border-radius: var(--site-radius); font: inherit;
+  }
+  footer { padding: 20px; color: var(--site-text-dim); }
+  .scrim { padding: 8px 20px; background: var(--site-scrim); color: #ffffff; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Component Site</h1>
+    <nav><a href="/a" data-route>Home</a><a href="/b" data-route>Library</a></nav>
+    <button class="cta" id="cta">Subscribe</button>
+  </header>
+
+  <p class="scrim">A translucent bar, the kind that sits over a hero image.</p>
+
+  <main id="feed"></main>
+
+  <footer>A quieter line of small print at the bottom of the page.</footer>
+
+<script>
+  // Cards are custom elements with open shadow roots: a document stylesheet cannot
+  // reach inside them, so the extension has to adopt a sheet into each one.
+  class SiteCard extends HTMLElement {
+    connectedCallback() {
+      const shadow = this.attachShadow({ mode: 'open' });
+      shadow.innerHTML = `
+        <style>
+          .card {
+            background: var(--site-surface);
+            color: var(--site-text);
+            border: 1px solid var(--site-line);
+            border-radius: var(--site-radius);
+            padding: 16px;
+            min-height: 120px;
+          }
+          .meta { color: var(--site-text-dim); font-size: 13px; }
+          .tag { background: var(--site-brand); color: #fff; padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+        </style>
+        <div class="card">
+          <p class="tag">Shadow DOM</p>
+          <h3>${this.getAttribute('title') ?? 'Card'}</h3>
+          <p class="meta">Painted entirely from custom properties, inside a shadow root.</p>
+        </div>`;
+    }
+  }
+  customElements.define('site-card', SiteCard);
+
+  const feed = document.getElementById('feed');
+  const add = (n) => {
+    for (let i = 0; i < n; i += 1) {
+      const card = document.createElement('site-card');
+      card.setAttribute('title', `Item ${feed.children.length + 1}`);
+      feed.appendChild(card);
+    }
+  };
+  add(6);
+
+  // Content that arrives after load, the way an infinite feed does.
+  setTimeout(() => add(3), 300);
+
+  // Client-side navigation, with no page load at all.
+  document.querySelector('nav').addEventListener('click', (event) => {
+    const link = event.target.closest('[data-route]');
+    if (!link) return;
+    event.preventDefault();
+    history.pushState({}, '', link.getAttribute('href'));
+    feed.innerHTML = '';
+    add(4);
+  });
+
+  window.__addCards = add;
+</script>
+</body>
+</html>

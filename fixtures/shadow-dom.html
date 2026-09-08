@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shadow DOM — fixture</title><link rel="stylesheet" href="fixtures.css"></head><body>
+<header class="site"><h1>Shadow DOM</h1><nav><ul><li><a href="index.html">All fixtures</a></li></ul></nav></header>
+<main><p style="color:var(--muted)">An open shadow root (selectable) beside a closed one (a real boundary).</p>
+<h2>Open shadow root</h2><div id="open-host"></div>
+<h2>Closed shadow root</h2><div id="closed-host"></div>
+<p style="color:var(--muted)">The closed root should be reported as a boundary, not silently skipped (§30).</p>
+<script>
+const open = document.getElementById('open-host').attachShadow({ mode: 'open' });
+open.innerHTML = '<style>.c{padding:16px;border:1px solid #E5E7EB;border-radius:8px}</style>' +
+  '<div class="c"><h3>Inside open shadow DOM</h3><button>Shadow button</button></div>';
+const closed = document.getElementById('closed-host').attachShadow({ mode: 'closed' });
+closed.innerHTML = '<div style="padding:16px;border:1px dashed #9CA3AF;border-radius:8px">Inside closed shadow DOM</div>';
+</script>
+</main><footer class="site">Local fixture page. Not a real site.</footer></body></html>

@@ -28,6 +28,19 @@ import { renderInspector, renderEditorBar } from './inspector.js';
 const CSS_SAFE = /[^a-zA-Z0-9#(),.%\-\s/]/g;
 const css = (value) => String(value ?? '').replace(CSS_SAFE, '').slice(0, 400);
 
+/**
+ * State keys whose change rearranges nothing, and so can be written into the DOM in place.
+ *
+ * Deliberately a short list. Everything else repaints, because a patch that disagrees with
+ * `render()` about what the panel should look like is a bug that only shows up sometimes.
+ */
+const IN_PLACE = new Set(['activeId', 'toast']);
+
+/** Whether a state value is unchanged. Objects are new each time, so they always are not. */
+const settled = (before, after) => before === after
+  || (before === null && after === null)
+  || (before === undefined && after === undefined);
+
 export class Panel extends Emitter {
   #doc;
   #host = null;
@@ -131,13 +144,80 @@ export class Panel extends Emitter {
     this.#root = null;
   }
 
-  /** Merges state and repaints. The panel is small enough that partial updates would be
-   *  more machinery than they save. */
+  /**
+   * Merges state and shows the result.
+   *
+   * A repaint rebuilds the panel's whole subtree, which is fine when the panel is showing
+   * something else afterwards and quietly awful when it is not: the gallery's scroll
+   * position goes back to the top, whatever had keyboard focus loses it, and every hover
+   * and transition restarts. Applying a theme used to do that three times over — once for
+   * the new tick, once for the toast, and once more when the toast expired a few seconds
+   * later, so the panel appeared to refresh itself long after the click.
+   *
+   * So a change that alters no structure is applied to the DOM directly, and only a change
+   * that genuinely rearranges the panel repaints it.
+   */
   setState(patch = {}) {
+    const changed = Object.keys(patch).filter((key) => !settled(this.#state[key], patch[key]));
     Object.assign(this.#state, patch);
     if (!this.#root) return;
     if ('appearance' in patch) this.#applyAppearance();
+    if (!changed.length) return;
+    if (changed.every((key) => IN_PLACE.has(key)) && this.#patch(changed)) return;
     this.render();
+  }
+
+  /**
+   * Applies the cosmetic changes without a repaint.
+   *
+   * Returns false if it cannot — an unexpected view, a panel mid-rebuild — and the caller
+   * falls back to a full render, so this is an optimisation and never a second source of
+   * truth about what the panel should look like.
+   */
+  #patch(changed) {
+    if (!this.#root.querySelector('.wb-panel')) return false;
+    const patchers = {
+      activeId: () => this.#patchActive(),
+      toast: () => this.#patchToast(),
+    };
+    // A key with no patcher yields undefined, which is not true, which repaints. Adding to
+    // `IN_PLACE` and forgetting to write the patch therefore costs a repaint, not a lie.
+    return changed.every((key) => patchers[key]?.() === true);
+  }
+
+  /** Moves the tick, and retitles the footer that names what is applied. */
+  #patchActive() {
+    const s = this.#state;
+    // Only the gallery draws the tick; any other view has to be rendered properly. The
+    // menu is excluded for the same reason — its share and export items are enabled by
+    // there being something applied, so it is showing `activeId` too.
+    if (s.view !== 'gallery' || s.menuOpen) return false;
+    for (const card of this.#root.querySelectorAll('.wb-card')) {
+      const on = card.dataset.value === s.activeId;
+      card.classList.toggle('is-on', on);
+      card.setAttribute('aria-pressed', String(on));
+      const name = card.querySelector('.wb-card-name');
+      const mark = name?.querySelector('.wb-check');
+      if (on && name && !mark) {
+        name.insertAdjacentHTML('beforeend', `<span class="wb-check">${icon('check', 12)}</span>`);
+      } else if (!on && mark) {
+        mark.remove();
+      }
+    }
+    const foot = this.#root.querySelector('.wb-foot');
+    if (foot) foot.outerHTML = footer(s);
+    return true;
+  }
+
+  /** The toast is a leaf at the end of the panel, so it comes and goes on its own. */
+  #patchToast() {
+    const panel = this.#root.querySelector('.wb-panel');
+    const showing = panel.querySelector('.wb-toast');
+    const next = this.#state.toast;
+    if (!next) { showing?.remove(); return true; }
+    if (showing) showing.outerHTML = toast(next);
+    else panel.insertAdjacentHTML('beforeend', toast(next));
+    return true;
   }
 
   toast(tone, message, timeout = 3200) {
@@ -151,9 +231,16 @@ export class Panel extends Emitter {
   render() {
     if (!this.#root) return;
     const s = this.#state;
-    // Which field had the caret, so a repaint mid-sheet does not send focus back to the
-    // dialog and lose the selection with it.
-    const focusedId = this.#shadow?.activeElement?.id ?? null;
+    // What had the caret, so a repaint mid-sheet does not send focus back to the dialog
+    // and lose the selection with it. A theme card has no id, so it is found again by the
+    // action it carries — otherwise applying a theme with the keyboard drops you out of
+    // the gallery entirely.
+    const focused = this.#focused();
+    // How far down the gallery had been scrolled. Worth keeping only while the panel goes
+    // on showing the same thing: arriving at a new view part-way down it would be worse
+    // than arriving at the top of it.
+    const staying = this.#root.querySelector('.wb-panel')?.dataset.view === s.view;
+    const scrolled = staying ? this.#root.querySelector('.wb-body')?.scrollTop ?? 0 : 0;
     this.#root.innerHTML = `
 <div class="wb-panel" data-side="${s.side === 'left' ? 'left' : 'right'}"
   data-view="${s.view}" role="dialog" aria-label="Webin" tabindex="-1">
@@ -169,15 +256,36 @@ export class Panel extends Emitter {
   ${s.toast ? toast(s.toast) : ''}
 </div>`;
 
+    const body = this.#root.querySelector('.wb-body');
+    if (body && scrolled) body.scrollTop = scrolled;
+
     // A field the user was in keeps the caret; a field that has just appeared takes it, so
     // opening the rename sheet lands you in the name rather than one Tab away from it.
-    const restore = focusedId
-      ? this.#root.querySelector(`#${CSS.escape(focusedId)}`)
+    const restore = focused
+      ? this.#root.querySelector(focused)
       : this.#root.querySelector('[data-autofocus]');
     if (restore) {
-      restore.focus();
-      if (!focusedId && typeof restore.select === 'function') restore.select();
+      restore.focus({ preventScroll: true });
+      if (!focused && typeof restore.select === 'function') restore.select();
     }
+  }
+
+  /**
+   * A selector that will find whatever has focus again after a repaint.
+   *
+   * An id when there is one, and otherwise the action the control carries, which is how
+   * every button in the panel already identifies itself to the runtime.
+   */
+  #focused() {
+    const element = this.#shadow?.activeElement;
+    if (!element || !this.#root?.contains(element)) return null;
+    if (element.id) return `#${CSS.escape(element.id)}`;
+    const { action, value } = element.dataset ?? {};
+    if (!action) return null;
+    const quote = (text) => String(text).replace(/["\\]/g, '\\$&');
+    return value === undefined
+      ? `[data-action="${quote(action)}"]`
+      : `[data-action="${quote(action)}"][data-value="${quote(value)}"]`;
   }
 
   /** Opens the file picker; the change handler emits the file's text. */

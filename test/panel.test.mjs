@@ -273,3 +273,89 @@ test('with nothing selected the editor says what to do', async () => {
   assert.ok(empty, 'an empty state, not a blank panel');
   assert.match(empty.textContent, /click/i);
 });
+
+// ─── Applying a theme must not refresh the panel ────────────────────────────
+
+test('applying a theme moves the tick without rebuilding the panel', async () => {
+  // A repaint throws away the gallery's scroll position, whatever had keyboard focus, and
+  // every hover and transition with them. Applying a theme changes a tick and a line of
+  // footer text, so it has no business doing any of that.
+  const { panel } = await mountPanel();
+  const body = panel.shadow.querySelector('.wb-body');
+  const cards = [...panel.shadow.querySelectorAll('.wb-card')];
+  const target = cards[cards.length - 1];
+
+  panel.setState({ activeId: target.dataset.value });
+  await flush();
+
+  assert.equal(panel.shadow.querySelector('.wb-body'), body, 'the same body element, not a new one');
+  assert.equal(target.classList.contains('is-on'), true);
+  assert.equal(target.getAttribute('aria-pressed'), 'true');
+  assert.ok(target.querySelector('.wb-check'), 'and it is ticked');
+  assert.equal(panel.shadow.querySelectorAll('.wb-card.is-on').length, 1, 'only one at a time');
+});
+
+test('the tick moves off the theme that had it', async () => {
+  const { panel } = await mountPanel();
+  const [first, second] = panel.shadow.querySelectorAll('.wb-card');
+
+  panel.setState({ activeId: first.dataset.value });
+  assert.equal(first.classList.contains('is-on'), true);
+
+  panel.setState({ activeId: second.dataset.value });
+  assert.equal(first.classList.contains('is-on'), false, 'the old tick is taken away');
+  assert.equal(first.querySelector('.wb-check'), null);
+  assert.equal(second.classList.contains('is-on'), true);
+});
+
+test('the footer keeps up with what is applied', async () => {
+  const { panel } = await mountPanel();
+  assert.match(panel.shadow.querySelector('.wb-foot').textContent, /this site is untouched/);
+
+  const card = panel.shadow.querySelector('.wb-card');
+  panel.setState({ activeId: card.dataset.value });
+  assert.match(panel.shadow.querySelector('.wb-foot').textContent, /applied here/);
+  assert.ok(panel.shadow.querySelector('[data-action="share"]'), 'and offers to share it');
+});
+
+test('a toast comes and goes without disturbing the panel', async () => {
+  // The toast used to repaint everything twice: once arriving and once expiring, so the
+  // panel appeared to refresh itself seconds after the click that caused it.
+  const { panel } = await mountPanel();
+  const body = panel.shadow.querySelector('.wb-body');
+
+  panel.toast('info', 'Nord applied', 0);
+  assert.match(panel.shadow.querySelector('.wb-toast').textContent, /Nord applied/);
+  assert.equal(panel.shadow.querySelector('.wb-body'), body);
+
+  panel.setState({ toast: null });
+  assert.equal(panel.shadow.querySelector('.wb-toast'), null, 'gone again');
+  assert.equal(panel.shadow.querySelector('.wb-body'), body, 'and the panel never moved');
+});
+
+test('setting state to what it already is does nothing at all', async () => {
+  const { panel } = await mountPanel({ view: 'gallery' });
+  const body = panel.shadow.querySelector('.wb-body');
+
+  panel.setState({ view: 'gallery', menuOpen: false, activeId: null });
+  assert.equal(panel.shadow.querySelector('.wb-body'), body);
+});
+
+test('a change that does rearrange the panel still repaints it', async () => {
+  const { panel } = await mountPanel();
+  const body = panel.shadow.querySelector('.wb-body');
+
+  panel.setState({ view: 'import' });
+  assert.notEqual(panel.shadow.querySelector('.wb-body'), body, 'a new view is a new body');
+  assert.ok(panel.shadow.querySelector('#wb-import'));
+});
+
+test('an open menu is repainted rather than patched behind its own back', async () => {
+  // The menu's share and export items are enabled by there being something applied, so it
+  // is showing `activeId` too and cannot be left out of the update.
+  const { panel } = await mountPanel({ menuOpen: true });
+  assert.ok(panel.shadow.querySelector('[data-action="share"]').hasAttribute('disabled'));
+
+  panel.setState({ activeId: 'nord' });
+  assert.equal(panel.shadow.querySelector('[data-action="share"]').hasAttribute('disabled'), false);
+});

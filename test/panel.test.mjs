@@ -44,8 +44,10 @@ test('themes are shelved, and your own get their own shelf', async () => {
   const sections = [...panel.shadow.querySelectorAll('.wb-section')].map((n) => n.textContent.trim());
 
   assert.deepEqual(sections, ['Essentials', 'Movements', 'Dark', 'Yours']);
-  const yourCards = panel.shadow.querySelectorAll('.wb-cell .wb-card-del');
+  const yourCards = panel.shadow.querySelectorAll('.wb-cell .wb-card-act--del');
   assert.equal(yourCards.length, 1, 'only your own themes can be deleted');
+  assert.equal(panel.shadow.querySelectorAll('[data-action="rename"]').length, 1,
+    'and only your own can be renamed — the presets are the extension\'s, not yours');
 });
 
 test('the applied theme is stated, not just implied', async () => {

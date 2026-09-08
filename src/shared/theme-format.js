@@ -18,6 +18,9 @@ import { adaptForeignThemes } from './foreign-themes.js';
 /** Bumped only when an older file needs migrating. */
 export const FORMAT_VERSION = 1;
 
+/** How long a theme's name may be. Shown as a counter wherever one is typed. */
+export const NAME_LIMIT = 42;
+
 const SHARE_PREFIX = 'webin:1:';
 const SHARE_PREFIX_Z = 'webin:1z:';
 
@@ -151,7 +154,7 @@ export function normaliseTheme(raw, { trusted = false } = {}) {
 
   return {
     id: slug(source.id) ?? `t-${Math.random().toString(36).slice(2, 9)}`,
-    name: text(source.name, 42) || 'Untitled theme',
+    name: text(source.name, NAME_LIMIT) || 'Untitled theme',
     description: text(source.description, 120),
     dark: source.dark === true,
     palette,

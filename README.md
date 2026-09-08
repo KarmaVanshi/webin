@@ -10,7 +10,7 @@ it to a friend as a single line of text.
 ```
 Load it:   chrome://extensions → Developer mode → Load unpacked → this folder
 Open it:   click the toolbar icon, or Alt+Shift+E
-Test it:   npm test          (163 tests, jsdom)
+Test it:   npm test          (166 tests, jsdom)
 Prove it:  npm run verify    (real Chromium, local fixture + youtube.com)
 ```
 
@@ -39,7 +39,9 @@ radius, the shadow treatment, the type and the density all move together, becaus
 is what makes a movement recognisable.
 
 **Your own themes.** Save the page you are looking at as a theme (*⋯ → Save this page as
-a theme*) and wear it anywhere else.
+a theme*) and wear it anywhere else. Anything you own can be renamed — hover a card in
+*Yours* and use the pencil. Themes arrive named after wherever they came from, which is a
+reasonable guess and rarely the name you want on your own shelf.
 
 **Themes from anywhere else.** Paste in a shadcn or DaisyUI `:root` block, a VS Code
 colour theme, a base16 scheme, a terminal palette, or a design-token file, and Webin reads
@@ -210,6 +212,10 @@ it refuses anything that is not `http` or `https`. There is no size limit — wh
 address answers with is read, and the timeout is the only bound on how much that can be.
 
 ### Nothing is saved before you have seen it
+
+One theme at a time is also offered under a name you can type over before it is kept; a
+collection is not, because naming six themes a field at a time is a form rather than a
+choice. Rename any of them afterwards from the gallery.
 
 A share code and a `.webin.json` file are already Webin themes, so they save straight away —
 there is nothing to disclose. Anything read out of somebody else's format stops at a
@@ -459,7 +465,7 @@ src/
     controls.js             the control library the inspector is built from
   storage/                  chrome.storage behind a plain key/value interface
 
-test/        163 tests — format, library, engine, store, panel, identity, editor, journeys
+test/        166 tests — format, library, engine, store, panel, identity, editor, journeys
 tools/       browser.mjs (a small CDP client) and verify.mjs (the real-browser checks)
 fixtures/    a page built the awkward way: custom properties, shadow roots, pushState
 attic/       the previous build, kept for reference; the editor above was rebuilt from it
@@ -469,7 +475,7 @@ attic/       the previous build, kept for reference; the editor above was rebuil
 
 ## Verification
 
-`npm test` runs 163 tests in jsdom, including end-to-end journeys that drive the real panel
+`npm test` runs 166 tests in jsdom, including end-to-end journeys that drive the real panel
 controls: apply a theme, reload and find it still there, import a friend's share code,
 capture a page, delete a theme, edit an element and find the edit again after a reload, and
 hand the panel a hostile theme to see it stay intact.

@@ -406,6 +406,83 @@ test('a theme and a hand edit can both be on, and the hand edit wins', async () 
   webin.destroy();
 });
 
+test('name a theme you captured, and the new name sticks', async () => {
+  const backend = new MemoryBackend();
+  const { dom, webin } = await makeRuntime(backend);
+  await webin.boot();
+  await webin.open();
+
+  // Capture names it after the site, which is a guess, not a decision.
+  webin.panel.emit('action', { action: 'capture' });
+  await flush(); await flush();
+  const captured = (await backend.get('themes')).themes.themes[0];
+  assert.equal(captured.name, 'Example', 'named after where it came from');
+
+  await click(webin.panel.shadow, `[data-action="rename"][data-value="${captured.id}"]`);
+  assert.equal(webin.panel.state.view, 'rename');
+  const field = webin.panel.shadow.querySelector('#wb-rename');
+  assert.ok(field, 'the sheet offers a name field');
+  assert.equal(field.value, 'Example', 'prefilled with what it is called now');
+  assert.equal(webin.panel.shadow.querySelector('label[for="wb-rename"]').textContent.trim(),
+    'Theme name', 'with a visible label, not a placeholder');
+
+  field.value = 'Sunday Reading';
+  await click(webin.panel.shadow, '[data-action="save-name"]');
+
+  assert.equal(webin.panel.state.view, 'gallery', 'and it goes back on its own');
+  const saved = (await backend.get('themes')).themes.themes.find((t) => t.id === captured.id);
+  assert.equal(saved.name, 'Sunday Reading');
+  assert.match(webin.panel.shadow.textContent, /Sunday Reading/);
+  webin.destroy();
+});
+
+test('an empty name is refused, and says so next to the field', async () => {
+  const backend = new MemoryBackend();
+  const { webin } = await makeRuntime(backend);
+  await webin.boot();
+  await webin.open();
+  webin.panel.emit('action', { action: 'capture' });
+  await flush(); await flush();
+  const mine = (await backend.get('themes')).themes.themes[0];
+
+  await click(webin.panel.shadow, `[data-action="rename"][data-value="${mine.id}"]`);
+  webin.panel.shadow.querySelector('#wb-rename').value = '   ';
+  await click(webin.panel.shadow, '[data-action="save-name"]');
+
+  assert.equal(webin.panel.state.view, 'rename', 'it stays put rather than saving nothing');
+  const error = webin.panel.shadow.querySelector('#wb-rename-error');
+  assert.ok(error, 'the reason is next to the field');
+  assert.match(error.textContent, /needs a name/);
+  assert.equal(webin.panel.shadow.querySelector('#wb-rename').getAttribute('aria-describedby'),
+    'wb-rename-error', 'and is announced with it');
+  assert.equal((await backend.get('themes')).themes.themes[0].name, mine.name, 'nothing was saved');
+  webin.destroy();
+});
+
+test('an imported theme can be named before it is kept', async () => {
+  const backend = new MemoryBackend();
+  const { webin } = await makeRuntime(backend);
+  await webin.boot();
+  await webin.open();
+
+  webin.panel.emit('action', {
+    action: 'import',
+    value: ':root { --background: #101010; --foreground: #f5f5f5; --primary: #3366ff; }',
+  });
+  await flush(); await flush();
+  assert.equal(webin.panel.state.view, 'preview');
+
+  const field = webin.panel.shadow.querySelector('#wb-preview-name');
+  assert.ok(field, 'a single theme is offered under a name you can change');
+  field.value = 'Borrowed Blue';
+  await click(webin.panel.shadow, '[data-action="confirm-import"]');
+
+  const themes = (await backend.get('themes')).themes.themes;
+  assert.equal(themes.length, 1);
+  assert.equal(themes[0].name, 'Borrowed Blue');
+  webin.destroy();
+});
+
 test('the panel toggles and Escape closes it', async () => {
   const backend = new MemoryBackend();
   const { dom, webin } = await makeRuntime(backend);

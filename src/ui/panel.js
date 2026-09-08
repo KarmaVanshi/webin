@@ -14,6 +14,7 @@
 
 import { Emitter, escapeHtml } from '../shared/util.js';
 import { OWNED_ATTR, APPEARANCE_ATTR } from '../shared/types.js';
+import { NAME_LIMIT } from '../shared/theme-format.js';
 import { GROUPS } from '../themes/library.js';
 import { panelCss } from './panel-css.js';
 import { icon } from './icons.js';
@@ -43,6 +44,8 @@ export class Panel extends Emitter {
     view: 'gallery',
     share: null,
     preview: null,
+    /** `{ id, name, error }` while a theme is being named. */
+    rename: null,
     /** Live editor state, handed over by the runtime whenever it changes. */
     editor: null,
     /** How many hand edits this site has saved, for the reset items. */
@@ -148,6 +151,9 @@ export class Panel extends Emitter {
   render() {
     if (!this.#root) return;
     const s = this.#state;
+    // Which field had the caret, so a repaint mid-sheet does not send focus back to the
+    // dialog and lose the selection with it.
+    const focusedId = this.#shadow?.activeElement?.id ?? null;
     this.#root.innerHTML = `
 <div class="wb-panel" data-side="${s.side === 'left' ? 'left' : 'right'}"
   data-view="${s.view}" role="dialog" aria-label="Webin" tabindex="-1">
@@ -156,11 +162,22 @@ export class Panel extends Emitter {
   <div class="wb-body">${s.view === 'import' ? importSheet()
     : s.view === 'preview' ? previewSheet(s)
     : s.view === 'share' ? shareSheet(s)
+    : s.view === 'rename' ? renameSheet(s)
     : s.view === 'edit' ? renderInspector(s.editor?.selection ?? null, s)
     : gallery(s)}</div>
   ${footer(s)}
   ${s.toast ? toast(s.toast) : ''}
 </div>`;
+
+    // A field the user was in keeps the caret; a field that has just appeared takes it, so
+    // opening the rename sheet lands you in the name rather than one Tab away from it.
+    const restore = focusedId
+      ? this.#root.querySelector(`#${CSS.escape(focusedId)}`)
+      : this.#root.querySelector('[data-autofocus]');
+    if (restore) {
+      restore.focus();
+      if (!focusedId && typeof restore.select === 'function') restore.select();
+    }
   }
 
   /** Opens the file picker; the change handler emits the file's text. */
@@ -216,6 +233,13 @@ export class Panel extends Emitter {
   };
 
   #onInput = (event) => {
+    // The counter is written straight into the DOM rather than through `setState`, because
+    // repainting the panel while someone is typing in it would take their caret with it.
+    if (event.target?.id === 'wb-rename') {
+      const count = this.#shadow?.querySelector('.wb-count');
+      if (count) count.textContent = `${event.target.value.length}/${NAME_LIMIT}`;
+      return;
+    }
     const control = event.target.closest?.('[data-control]');
     if (!control) return;
     // Only the continuous controls are worth previewing; a text field mid-typing is not.
@@ -253,10 +277,21 @@ export class Panel extends Emitter {
 
   #onKeyDown = (event) => {
     event.stopPropagation();
+    // A name is one line, so Enter means "done" rather than "new paragraph".
+    if (event.key === 'Enter' && event.target?.id === 'wb-rename') {
+      event.preventDefault();
+      this.emit('action', { action: 'save-name' });
+      return;
+    }
+    if (event.key === 'Enter' && event.target?.id === 'wb-preview-name') {
+      event.preventDefault();
+      this.emit('action', { action: 'confirm-import' });
+      return;
+    }
     if (event.key !== 'Escape') return;
     event.preventDefault();
     if (this.#state.menuOpen) this.setState({ menuOpen: false });
-    else if (this.#state.view !== 'gallery') this.setState({ view: 'gallery', share: null, preview: null });
+    else if (this.#state.view !== 'gallery') this.setState({ view: 'gallery', share: null, preview: null, rename: null });
     else this.emit('action', { action: 'close' });
   };
 
@@ -268,6 +303,16 @@ export class Panel extends Emitter {
   /** The address in the import sheet's URL field. */
   get importUrl() {
     return this.#shadow?.querySelector('#wb-import-url')?.value ?? '';
+  }
+
+  /** The name being typed in the rename sheet. */
+  get renameValue() {
+    return this.#shadow?.querySelector('#wb-rename')?.value ?? '';
+  }
+
+  /** The name being typed over a single theme in the import preview. */
+  get previewName() {
+    return this.#shadow?.querySelector('#wb-preview-name')?.value ?? '';
   }
 }
 
@@ -355,9 +400,14 @@ function card(theme, active) {
     <span class="wb-card-name"><span>${escapeHtml(theme.name)}</span>
       ${active ? `<span class="wb-check">${icon('check', 12)}</span>` : ''}</span>
   </button>
-  ${theme.custom ? `<button type="button" class="wb-card-del" data-action="delete"
-    data-value="${escapeHtml(theme.id)}" title="Delete ${escapeHtml(theme.name)}"
-    aria-label="Delete ${escapeHtml(theme.name)}">${icon('trash', 12)}</button>` : ''}
+  ${theme.custom ? `<span class="wb-card-acts">
+    <button type="button" class="wb-card-act" data-action="rename"
+      data-value="${escapeHtml(theme.id)}" title="Rename ${escapeHtml(theme.name)}"
+      aria-label="Rename ${escapeHtml(theme.name)}">${icon('pencil', 12)}</button>
+    <button type="button" class="wb-card-act wb-card-act--del" data-action="delete"
+      data-value="${escapeHtml(theme.id)}" title="Delete ${escapeHtml(theme.name)}"
+      aria-label="Delete ${escapeHtml(theme.name)}">${icon('trash', 12)}</button>
+  </span>` : ''}
 </div>`;
 }
 
@@ -463,6 +513,12 @@ function previewSheet(s) {
     <summary>${inferred.length} value${inferred.length === 1 ? '' : 's'} worked out from names</summary>
     <ul class="wb-notes">${inferred.slice(0, 24).map((note) => `<li>${escapeHtml(note)}</li>`).join('')}</ul>
   </details>` : ''}
+  ${many ? '' : `<div class="wb-label-row">
+    <label class="wb-label" for="wb-preview-name">Call it</label>
+  </div>
+  <textarea id="wb-preview-name" class="wb-input wb-input--name" rows="1"
+    maxlength="${NAME_LIMIT}" spellcheck="false" autocomplete="off"
+    >${escapeHtml(themes[0]?.name ?? '')}</textarea>`}
   <div class="wb-row">
     <button type="button" class="wb-btn wb-btn--primary" data-action="confirm-import">
       Keep ${many ? `${themes.length} themes` : 'this theme'}</button>
@@ -470,6 +526,37 @@ function previewSheet(s) {
     <button type="button" class="wb-btn wb-btn--quiet" data-action="cancel">Discard</button>
   </div>
   <p class="wb-hint">Nothing has been saved yet.</p>
+</div>`;
+}
+
+/**
+ * Naming a theme.
+ *
+ * A sheet rather than a field inside the card: the panel repaints by replacing its own
+ * markup wholesale, so an input living in the gallery grid would lose focus and caret the
+ * moment anything else set state. A sheet is also where every other one-thing-at-a-time
+ * job in this panel already happens.
+ */
+function renameSheet(s) {
+  const value = s.rename?.name ?? '';
+  const error = s.rename?.error ?? '';
+  return `
+<div class="wb-sheet">
+  <div class="wb-label-row">
+    <label class="wb-label" for="wb-rename">Theme name</label>
+    <span class="wb-count">${value.length}/${NAME_LIMIT}</span>
+  </div>
+  <textarea id="wb-rename" class="wb-input wb-input--name" rows="1" maxlength="${NAME_LIMIT}"
+    spellcheck="false" autocomplete="off" data-autofocus
+    ${error ? 'aria-describedby="wb-rename-error" aria-invalid="true"' : ''}
+    >${escapeHtml(value)}</textarea>
+  ${error ? `<p class="wb-error" id="wb-rename-error" role="alert">${escapeHtml(error)}</p>` : ''}
+  <div class="wb-row">
+    <button type="button" class="wb-btn wb-btn--primary" data-action="save-name">Save name</button>
+    <span style="flex:1"></span>
+    <button type="button" class="wb-btn wb-btn--quiet" data-action="cancel">Cancel</button>
+  </div>
+  <p class="wb-hint">Enter saves, Escape goes back.</p>
 </div>`;
 }
 

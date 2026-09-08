@@ -11,7 +11,7 @@ import { Msg, BOOT_STYLE_ID, OWNED_ATTR } from '../shared/types.js';
 import { debounce } from '../shared/util.js';
 import {
   parseThemeInput, isShareCode, decodeShareCode, encodeShareCode,
-  themeToFile, collectionToFile, themeFileName,
+  themeToFile, collectionToFile, themeFileName, normaliseTheme,
 } from '../shared/theme-format.js';
 import { createBackend } from '../storage/bridge.js';
 import { Store, hostOf } from '../storage/store.js';
@@ -321,7 +321,7 @@ export class Webin {
       case 'clear': return this.#clearTheme();
       case 'close': return this.close();
       case 'menu': return this.#panel.setState({ menuOpen: !this.#panel.state.menuOpen });
-      case 'cancel': return this.#panel.setState({ view: 'gallery', share: null, preview: null, menuOpen: false });
+      case 'cancel': return this.#panel.setState({ view: 'gallery', share: null, preview: null, rename: null, menuOpen: false });
       case 'appearance': return this.#toggleAppearance();
       case 'readable': return this.#toggleReadable();
       case 'mode': return this.#setMode(value);
@@ -346,6 +346,8 @@ export class Webin {
       case 'import-url': return this.#importFromUrl(this.#panel.importUrl);
       case 'confirm-import': return this.#confirmImport();
       case 'import': return this.#import(value);
+      case 'rename': return this.#openRename(value);
+      case 'save-name': return this.#saveName();
       case 'delete': return this.#delete(value);
       case 'share': return this.#share();
       case 'copy-share': return this.#copyShare();
@@ -615,7 +617,10 @@ export class Webin {
   async #confirmImport() {
     const themes = this.#panel.state.preview?.themes ?? [];
     if (!themes.length) { this.#panel.setState({ view: 'gallery', preview: null }); return; }
-    await this.#keep(themes);
+    // A single theme is offered under a name you can type over before it is kept. A
+    // collection is not: naming six themes one field at a time is not naming, it is a form.
+    const typed = themes.length === 1 ? this.#panel.previewName.trim() : '';
+    await this.#keep(typed ? [{ ...themes[0], name: typed }] : themes);
   }
 
   /**
@@ -644,6 +649,45 @@ export class Webin {
       return;
     }
     await this.#import(result.text, { name: titleCase(result.host ?? url.host) });
+  }
+
+  /**
+   * Naming a theme you own.
+   *
+   * Themes arrive named after wherever they came from — the host for a capture, the file
+   * for an import — which is a reasonable guess and rarely the name you want to see in a
+   * gallery of your own. Presets are not renameable: they are the extension's, not yours.
+   */
+  async #openRename(id) {
+    const theme = (await this.#store.themes()).find((t) => t.id === id);
+    if (!theme) return;
+    this.#panel.setState({ view: 'rename', rename: { id, name: theme.name, error: '' }, menuOpen: false });
+  }
+
+  async #saveName() {
+    const pending = this.#panel.state.rename;
+    if (!pending) return;
+    const name = this.#panel.renameValue.trim();
+    // Kept in state so the field comes back with what they typed, not with the old name.
+    if (!name) {
+      this.#panel.setState({ rename: { ...pending, name: '', error: 'A theme needs a name.' } });
+      return;
+    }
+    const theme = (await this.#store.themes()).find((t) => t.id === pending.id);
+    if (!theme) { this.#panel.setState({ view: 'gallery', rename: null }); return; }
+
+    // Back through the one validator, so a name typed by hand is checked exactly as a name
+    // that arrived in a share code would be: capped, and stripped of control characters.
+    const renamed = normaliseTheme({ ...theme, name });
+    if (!renamed) {
+      this.#panel.setState({ rename: { ...pending, name, error: 'That name cannot be used.' } });
+      return;
+    }
+    await this.#store.saveTheme(renamed);
+    // The footer names the applied theme, so it has to hear about this too.
+    if (this.#active?.id === renamed.id) this.#active = { ...this.#active, name: renamed.name };
+    await this.#refresh({ view: 'gallery', rename: null });
+    this.#panel.toast('info', `Now called “${renamed.name}”.`);
   }
 
   async #delete(id) {

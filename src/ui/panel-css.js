@@ -264,11 +264,17 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .wb-card-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-check { margin-left: auto; color: var(--accent); display: inline-flex; flex: none; }
 
-/* Deleting one of your own themes is a hover affordance, not a permanent control. */
-.wb-card-del {
+/* Renaming and deleting one of your own themes are hover affordances, not permanent
+   controls. 24px rather than the 20px this started at, because a pointer target below
+   24x24 CSS px fails WCAG 2.2 target size, and there are two of them side by side now. */
+.wb-card-acts {
   position: absolute;
   top: 3px; right: 3px;
-  width: 20px; height: 20px;
+  display: flex;
+  gap: 2px;
+}
+.wb-card-act {
+  width: 24px; height: 24px;
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: var(--radius-sm);
   background: var(--surface);
@@ -276,8 +282,9 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   opacity: 0;
   transition: opacity var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.wb-cell:hover .wb-card-del, .wb-card-del:focus-visible { opacity: 1; }
-.wb-card-del:hover { color: var(--danger); background: var(--danger-dim); }
+.wb-cell:hover .wb-card-act, .wb-card-act:focus-visible { opacity: 1; }
+.wb-card-act:hover { color: var(--fg); background: var(--raised); }
+.wb-card-act--del:hover { color: var(--danger); background: var(--danger-dim); }
 
 /* ── Footer ─────────────────────────────────────────────────────────── */
 
@@ -400,6 +407,23 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   resize: vertical;
 }
 .wb-input::placeholder { color: var(--fg-dim); }
+/* The name field is one line of ordinary prose, not a paste target, so it drops the
+   monospace and the tall min-height the import textarea needs. */
+.wb-input--name {
+  min-height: 0;
+  height: 32px;
+  font-family: inherit;
+  font-size: var(--text-body);
+  resize: none;
+  white-space: nowrap;
+}
+.wb-error {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-micro);
+  color: var(--danger);
+}
+.wb-count { margin-left: auto; font-size: var(--text-micro); color: var(--fg-dim); }
+.wb-label-row { display: flex; align-items: baseline; gap: var(--space-2); }
 .wb-row { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-4); }
 .wb-hint {
   margin: var(--space-4) 0 0;

@@ -10,7 +10,7 @@ it to a friend as a single line of text.
 ```
 Load it:   chrome://extensions → Developer mode → Load unpacked → this folder
 Open it:   click the toolbar icon, or Alt+Shift+E
-Test it:   npm test          (144 tests, jsdom)
+Test it:   npm test          (148 tests, jsdom)
 Prove it:  npm run verify    (real Chromium, local fixture + youtube.com)
 ```
 
@@ -184,25 +184,186 @@ byte-for-byte what the server sent.
 
 Webin's own format is seven named colours and a few numbers. So is almost every other
 design system, underneath — which means a shadcn `:root` block, a VS Code colour theme and
-a base16 scheme are the same document in different notation.
+a base16 scheme are the same document in different notation. What follows is that notation
+layer in detail.
 
-| Paste in | and Webin reads |
+### Three ways in
+
+All three live behind *⋯ → Import a theme…*, and all three end up in the same place.
+
+**Paste it.** The textarea takes a share code, one of Webin's own `.webin.json` files, or
+the raw text of somebody else's theme file. The format is worked out from the content
+rather than from a file extension, because when you paste into a textarea there is no
+extension to go on — a `.json` that is really a VS Code theme and a `.json` that is really
+a base16 scheme need different readers.
+
+**Choose a file.** `.json`, `.css`, `.txt`, `.yaml` and `.yml`. It is read in the browser;
+nothing is uploaded.
+
+**Fetch an address.** Type a URL and Webin goes and gets it — `example.com/theme.css` is
+enough, the scheme is filled in if you leave it off. The request is made by the extension's
+service worker rather than by the page you happen to be on, for two reasons: a page's own
+CSP governs fetches made from it, so half the web would refuse, and a request issued from
+the page's context is a request the page can watch. It carries `credentials: 'omit'`, so it
+cannot pull down a logged-in page using your own cookies; it gives up after 15 seconds; it
+refuses anything that is not `http` or `https`; and it refuses anything over 2 MB, checked
+both on the declared length and on what actually arrives.
+
+### Nothing is saved before you have seen it
+
+A share code and a `.webin.json` file are already Webin themes, so they save straight away —
+there is nothing to disclose. Anything read out of somebody else's format stops at a
+preview first: each theme as a card, and under a disclosure every value that was worked out
+rather than read, in the form `accent ← --primary` or `border ← a faint line between text
+and background`. A guess you cannot see is a guess you cannot correct.
+
+Whatever you confirm is then rebuilt field by field by the same validator that handles a
+share code — see [Sharing safely](#sharing-safely). An adapter never produces a theme, only
+a candidate, so a CSS file off the internet gets exactly the treatment a stranger's share
+code gets.
+
+### A CSS `:root` block
+
+Take it from shadcn's theme generator, a DaisyUI `@plugin` block, Open Props, or the
+`:root` of any stylesheet you like the look of. A Tailwind *config* file is JavaScript
+rather than CSS and will not read; its generated stylesheet will.
+
+Both palettes come across. Theme files usually carry a light one and a dark one, so every
+rule block whose selector mentions dark — `.dark`, `[data-theme="dark"]`, a
+`prefers-color-scheme: dark` media block — is gathered separately and becomes a second
+theme with *Dark* appended to its name. Palettes wrapped in `@layer` or `@media` are found,
+because the inner rules are what get read.
+
+Colours may be written as `#abc`, `#aabbcc`, `#aabbccdd`, `rgb()`, `hsl()`, `oklch()`,
+`oklab()`, a CSS colour name, or shadcn's bare triplet — `221.2 83.2% 53.3%`, three numbers
+that are a colour only if you already know they are the inside of an `hsl()` the stylesheet
+supplies. `var()` and `color-mix()` are references rather than values and are skipped.
+
+`--radius`, `--radius-box`, `--rounded-box` or `--border-radius` sets the corner radius,
+with `rem` and `em` converted at 16px.
+
+### A VS Code colour theme
+
+The file lives inside the extension that ships it:
+
+```
+~/.vscode/extensions/<publisher>.<theme>-<version>/themes/*.json
+```
+
+Built-in themes live in the app bundle instead, under
+`resources/app/extensions/theme-defaults/themes/`. Either way the theme's own repository
+usually has the same file, which is the easiest thing to point *Fetch* at.
+
+These files name editor parts rather than design roles, so the mapping is explicit rather
+than inferred. Only the `colors` block is read, and the first key present wins:
+
+| Role | Keys tried, in order |
 |---|---|
-| A CSS `:root` block | shadcn, DaisyUI, Tailwind, Open Props, or anything with custom properties. A `.dark` block becomes a second theme. |
-| A VS Code colour theme | the editor background becomes the canvas, the sidebar a raised surface, a button fill the accent. |
-| A base16 or base24 scheme | mapped by position, so nothing has to be guessed at all. |
-| A terminal palette | iTerm and Windows Terminal, which can carry a whole shelf of them at once. |
-| A design-token file | W3C `$value` tokens, Style Dictionary output, Figma Tokens exports. |
+| background | `editor.background` · `editorPane.background` · `tab.activeBackground` |
+| surface | `sideBar.background` · `editorWidget.background` · `panel.background` · `activityBar.background` |
+| text | `editor.foreground` · `foreground` · `sideBar.foreground` |
+| muted text | `descriptionForeground` · `disabledForeground` · `editorLineNumber.foreground` |
+| accent | `button.background` · `textLink.foreground` · `focusBorder` · `activityBarBadge.background` |
+| on accent | `button.foreground` · `activityBarBadge.foreground` |
+| border | `panel.border` · `editorGroup.border` · `contrastBorder` · `input.border` |
 
-Roles are worked out from names, in a deliberate order: shadcn's `--primary` is the brand
-and its `--accent` is a muted hover fill, so taking the one actually named "accent" would
-turn every imported theme grey. Whatever a file leaves out is derived, and anything derived
-is shown to you before it is saved, because a guess you cannot see is a guess you cannot
-correct.
+The theme's own `name` and `type` are kept, and shadows are set sharp to suit an editor
+palette. `tokenColors` is not read at all: it is most of the file, and most of what you
+would recognise a theme by, but a web page has no syntax to highlight. A theme that defines
+little beyond `tokenColors` therefore imports with several roles derived, and the preview
+will say which.
 
-You can also paste a URL. That is the one thing Webin does over the network, it happens
-only when you ask for it, the request is made by the extension rather than by the page you
-are on, and it carries none of your cookies.
+Many of these files are JSONC — `//` comments and trailing commas. That is not JSON, so it
+will not parse and Webin will tell you it could not read it. Strip the comments, or use the
+published build from the theme's repository.
+
+### A base16 or base24 scheme
+
+Take one from the base16 gallery or any `base16-*` repository. Both the YAML these are
+published in and the JSON some tools emit are read.
+
+Nothing is guessed here, because the spec fixes what every slot means:
+
+| `base00` | `base01` | `base02` | `base03` | `base05` | `base0D` |
+|---|---|---|---|---|---|
+| background | surface | border | muted text | text | accent |
+
+`scheme:` names the theme, `author:` is kept, and shadows are set to none.
+
+### A terminal palette
+
+Windows Terminal's `settings.json` holds its palettes in a `schemes` array, and each one
+becomes a theme — one file can import a whole shelf at once. An iTerm-style file with
+`background`, `foreground` and the sixteen ANSI colours at the top level works the same
+way.
+
+`background` and `foreground` are both required; a scheme missing either is skipped rather
+than guessed at. `black` or `brightBlack` becomes the raised surface, the first of
+`blue` · `brightBlue` · `purple` · `cyan` becomes the accent, and `brightBlack` or `white`
+becomes muted text. The result is forced to monospace, square corners and no shadow,
+because that is what a terminal palette is.
+
+### A design-token file
+
+W3C DTCG files, Style Dictionary output and Figma Tokens exports are all the same shape.
+The tree is walked to a depth of eight looking for `$value`, or for `value` alongside a
+`type`, and each path is flattened into a name — `color.brand.primary` becomes
+`brand-primary` — which then goes through the same name matching as a CSS variable.
+
+Aliases are not resolved. A token whose value is `{color.blue.500}` or `var(--blue-500)` is
+a reference rather than a colour and is skipped, so export a resolved file if your generator
+offers one.
+
+### How names become roles
+
+For CSS variables and design tokens the role has to come from the name, and names are the
+least trustworthy part of any theme file. Two rules keep it honest.
+
+Matching is **exact**, never a substring, which is what stops `--primary-foreground` being
+read as the accent. And roles claim names in a fixed order, most specific first, each name
+going to whichever role asks for it earliest:
+
+| Role | Names, in the order they are tried |
+|---|---|
+| muted text | `muted-foreground` · `text-muted` · `text-secondary` · `foreground-muted` · `fg-muted` · `neutral-content` · `base-content-secondary` · `description` · `text-dim` · `subtle` · `text-tertiary` · `on-surface-variant` · `nc` |
+| on accent | `primary-foreground` · `on-primary` · `primary-content` · `accent-foreground` · `on-accent` · `button-foreground` · `pc` · `ac` |
+| background | `background` · `bg` · `base-100` · `canvas` · `page` · `body-bg` · `backdrop` · `surface-0` · `editor-background` · `b1` |
+| surface | `card` · `popover` · `panel` · `surface` · `base-200` · `elevated` · `muted` · `secondary` · `surface-1` · `sidebar-background` · `b2` |
+| text | `foreground` · `text` · `base-content` · `fg` · `ink` · `body-color` · `on-background` · `on-surface` · `text-primary` · `editor-foreground` · `bc` |
+| accent | `primary` · `brand` · `accent` · `link` · `interactive` · `action` · `p` · `a` |
+| border | `border` · `outline` · `divider` · `base-300` · `rule` · `stroke` · `separator` · `border-color` · `b3` |
+
+That order is the whole design. In shadcn `--primary` is the brand and `--accent` is a
+muted hover fill, so taking the one actually named "accent" at face value would turn every
+imported shadcn theme grey — which is why `accent` is resolved late, after the roles with
+unambiguous names have taken theirs. For the same reason `muted-foreground` is tested
+before `muted`, or a caption colour ends up as a panel fill.
+
+Before matching, prefixes that say nothing about a role are stripped, so `--color-primary`,
+`--theme-primary`, `--ui-primary` and `color.primary` are all read as `primary`. Dots,
+underscores and spaces all count as hyphens.
+
+### What a file leaves out
+
+Refusing an incomplete file would reject most real ones — a VS Code theme names a hundred
+editor colours and not one of the seven roles by these names. So the requirement is only a
+background and a text colour, and the rest is derived from what is there:
+
+- a missing background or surface borrows the other
+- muted text is the text colour mixed 35% of the way toward the background
+- a border is a faint line between text and background, weighted by whether the theme is dark
+- an accent, for want of a brand colour, falls back to the text colour
+- the colour *on* the accent is whichever of black or white reads better against it
+
+Each of those is reported in the preview as derived. If either the background or the text
+colour is missing, nothing is imported and you are told what was missing.
+
+### Afterwards
+
+An imported theme is yours: it sits in the gallery marked as custom, can be applied to any
+site, edited, copied as a share code, downloaded, or deleted. An import never overwrites
+something you already have — a theme arriving with an id already in use is given a fresh
+one rather than replacing yours. Storage holds 80 themes.
 
 ---
 
@@ -265,7 +426,7 @@ src/
     controls.js             the control library the inspector is built from
   storage/                  chrome.storage behind a plain key/value interface
 
-test/        144 tests — format, library, engine, store, panel, identity, editor, journeys
+test/        148 tests — format, library, engine, store, panel, identity, editor, journeys
 tools/       browser.mjs (a small CDP client) and verify.mjs (the real-browser checks)
 fixtures/    a page built the awkward way: custom properties, shadow roots, pushState
 attic/       the previous build, kept for reference; the editor above was rebuilt from it
@@ -275,7 +436,7 @@ attic/       the previous build, kept for reference; the editor above was rebuil
 
 ## Verification
 
-`npm test` runs 144 tests in jsdom, including end-to-end journeys that drive the real panel
+`npm test` runs 148 tests in jsdom, including end-to-end journeys that drive the real panel
 controls: apply a theme, reload and find it still there, import a friend's share code,
 capture a page, delete a theme, edit an element and find the edit again after a reload, and
 hand the panel a hostile theme to see it stay intact.

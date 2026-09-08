@@ -205,9 +205,9 @@ enough, the scheme is filled in if you leave it off. The request is made by the 
 service worker rather than by the page you happen to be on, for two reasons: a page's own
 CSP governs fetches made from it, so half the web would refuse, and a request issued from
 the page's context is a request the page can watch. It carries `credentials: 'omit'`, so it
-cannot pull down a logged-in page using your own cookies; it gives up after 15 seconds; it
-refuses anything that is not `http` or `https`; and it refuses anything over 2 MB, checked
-both on the declared length and on what actually arrives.
+cannot pull down a logged-in page using your own cookies; it gives up after 15 seconds; and
+it refuses anything that is not `http` or `https`. There is no size limit — whatever the
+address answers with is read, and the timeout is the only bound on how much that can be.
 
 ### Nothing is saved before you have seen it
 

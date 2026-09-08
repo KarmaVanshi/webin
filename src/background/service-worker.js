@@ -54,8 +54,6 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   return false;
 });
 
-/** A theme file is small. Anything of this size is not one, and is not worth reading. */
-const MAX_THEME_BYTES = 2 * 1024 * 1024;
 const FETCH_TIMEOUT = 15000;
 
 /**
@@ -92,11 +90,10 @@ async function fetchTheme(rawUrl) {
     });
     if (!response.ok) return { ok: false, reason: `${url.host} answered ${response.status}.` };
 
-    const declared = Number(response.headers.get('content-length') ?? 0);
-    if (declared > MAX_THEME_BYTES) return { ok: false, reason: 'That file is too big to be a theme.' };
-
+    // No size ceiling: whatever the address answers with is read. The timeout above is the
+    // only bound, and it is a bound on the fetch taking too long rather than on the file
+    // being too large, so a big theme on a slow host is the case it is meant to catch.
     const text = await response.text();
-    if (text.length > MAX_THEME_BYTES) return { ok: false, reason: 'That file is too big to be a theme.' };
     return { ok: true, text, url: response.url, host: url.host };
   } catch (error) {
     return {

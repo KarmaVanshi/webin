@@ -197,6 +197,96 @@ test('genuinely broken JSON is still refused', () => {
   assert.equal(adaptForeignThemes('{"colors": {"editor.background": '), null);
 });
 
+// What VS Code's own theme exporter writes: the whole palette, with everything that came
+// from a built-in default commented out. Live declarations first, inherited ones after.
+const VSCODE_GENERATED = `{
+	"$schema": "vscode://schemas/color-theme",
+	"name": "Dark High Contrast",
+	"type": "hcDark",
+	"colors": {
+		"editor.background": "#000000",
+		"editor.foreground": "#ffffff",
+		//"sideBar.background": "#000000",
+		//"descriptionForeground": "#ffffffb3",
+		//"button.background": "#000000",
+		//"button.foreground": "#ffffff",
+		//"textLink.foreground": "#21a6ff",
+		//"panel.border": "#6fc3df",
+		//"widget.shadow": null
+	}
+}`;
+
+test('a theme exported with its defaults commented out still imports whole', () => {
+  const { themes, error } = importAll(VSCODE_GENERATED);
+  assert.equal(error, null);
+  const { palette } = themes[0];
+  assert.equal(palette.background, '#000000', 'read from a live declaration');
+  assert.equal(palette.surface, '#000000', 'and this one from a commented default');
+  assert.equal(palette.textMuted, 'rgba(255, 255, 255, 0.702)');
+  assert.equal(palette.border, '#6fc3df');
+});
+
+test('a live declaration beats a commented one for the same key', () => {
+  const source = `{
+	"name": "T",
+	"colors": {
+		"editor.background": "#101010",
+		//"editor.background": "#ffffff",
+		//"editor.foreground": "#eeeeee"
+	}
+}`;
+  const { themes } = importAll(source);
+  assert.equal(themes[0].palette.background, '#101010', 'what the file states outright wins');
+  assert.equal(themes[0].palette.text, '#eeeeee', 'what it inherited is still read');
+});
+
+test('prose that only looks like a declaration is left as prose', () => {
+  // Reviving this would not parse, so the file has to be read exactly as it was.
+  const source = `{
+	"name": "T",
+	// "editor.background": is where the canvas colour goes
+	"colors": { "editor.background": "#123456", "editor.foreground": "#fafafa" }
+}`;
+  const { themes, error } = importAll(source);
+  assert.equal(error, null);
+  assert.equal(themes[0].palette.background, '#123456');
+});
+
+test('an accent the colour of the page falls through to one you can see', () => {
+  // VS Code's high-contrast buttons are black on a black canvas, told apart by a border.
+  const source = JSON.stringify({
+    name: 'HC',
+    colors: {
+      'editor.background': '#000000',
+      'editor.foreground': '#ffffff',
+      'button.background': '#000000',
+      'button.foreground': '#ffffff',
+      'textLink.foreground': '#21a6ff',
+    },
+  });
+  const { themes } = importAll(source);
+  const { palette } = themes[0];
+  assert.equal(palette.accent, '#21a6ff', 'not the invisible button fill');
+  assert.equal(palette.onAccent, '#000000', 'and white does not read on that, so it is derived');
+  assert.ok(contrastRatio(parseColor(palette.onAccent), parseColor(palette.accent)) >= 4.5);
+});
+
+test('a workable accent is still taken from the button, as before', () => {
+  const source = JSON.stringify({
+    name: 'Ordinary',
+    colors: {
+      'editor.background': '#011627',
+      'editor.foreground': '#d6deeb',
+      'button.background': '#7e57c2',
+      'button.foreground': '#ffffff',
+      'textLink.foreground': '#ff0000',
+    },
+  });
+  const { palette } = importAll(source).themes[0];
+  assert.equal(palette.accent, '#7e57c2');
+  assert.equal(palette.onAccent, '#ffffff');
+});
+
 // ─── base16 ─────────────────────────────────────────────────────────────────
 
 test('a base16 scheme maps by position, with nothing left to guess', () => {

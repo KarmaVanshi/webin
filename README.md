@@ -10,7 +10,7 @@ it to a friend as a single line of text.
 ```
 Load it:   chrome://extensions → Developer mode → Load unpacked → this folder
 Open it:   click the toolbar icon, or Alt+Shift+E
-Test it:   npm test          (155 tests, jsdom)
+Test it:   npm test          (160 tests, jsdom)
 Prove it:  npm run verify    (real Chromium, local fixture + youtube.com)
 ```
 
@@ -267,6 +267,13 @@ than inferred. Only the `colors` block is read, and the first key present wins:
 | on accent | `button.foreground` · `activityBarBadge.foreground` |
 | border | `panel.border` · `editorGroup.border` · `contrastBorder` · `input.border` |
 
+A candidate that cannot do its job is passed over for the next key in its row. An editor
+gets away with things a page does not: VS Code's high-contrast buttons are black on a black
+canvas, told apart by a bright border, so `button.background` would otherwise hand you an
+accent nobody can see. An accent with no contrast against the background, or an on-accent
+that cannot be read on the accent, falls through — and if nothing in the row works, the role
+is derived like any other missing one and reported as derived.
+
 The theme's own `name` and `type` are kept, and shadows are set sharp to suit an editor
 palette. `tokenColors` is not read at all: it is most of the file, and most of what you
 would recognise a theme by, but a web page has no syntax to highlight. A theme that defines
@@ -280,11 +287,16 @@ forgiven. The stripper tracks strings and escapes, because `"$schema":
 "vscode://schemas/color-theme"` opens every generated theme file and a line-wise regex
 would eat half of it.
 
-One thing worth knowing about VS Code's own *Developer: Generate Color Theme From Current
-Settings*: it writes out the whole palette but comments out every value that came from a
-default, leaving only what the theme itself declared. That is a handful of colours, not a
-theme, so it imports with most roles derived. Uncomment the block before importing if you
-want the palette you can actually see on screen.
+Commented-out declarations are read too, which needs saying because it sounds wrong. VS
+Code's own *Developer: Generate Color Theme From Current Settings* writes out the whole
+resolved palette and then comments out every value that came from a built-in default,
+leaving perhaps eleven live declarations behind. Taken literally that file is a theme of
+eleven colours and imports with most roles guessed — but the person who exported it was
+looking at the whole thing on screen and means to import the whole thing. So the commented
+declarations are harvested as well, and anything the file states outright wins over them,
+because that is the part its author chose rather than inherited. Prose stays a comment:
+only lines shaped like a declaration are revived, and if reviving them yields something
+that will not parse, the file is read exactly as it was.
 
 ### A base16 or base24 scheme
 
@@ -435,7 +447,7 @@ src/
     controls.js             the control library the inspector is built from
   storage/                  chrome.storage behind a plain key/value interface
 
-test/        155 tests — format, library, engine, store, panel, identity, editor, journeys
+test/        160 tests — format, library, engine, store, panel, identity, editor, journeys
 tools/       browser.mjs (a small CDP client) and verify.mjs (the real-browser checks)
 fixtures/    a page built the awkward way: custom properties, shadow roots, pushState
 attic/       the previous build, kept for reference; the editor above was rebuilt from it
@@ -445,7 +457,7 @@ attic/       the previous build, kept for reference; the editor above was rebuil
 
 ## Verification
 
-`npm test` runs 155 tests in jsdom, including end-to-end journeys that drive the real panel
+`npm test` runs 160 tests in jsdom, including end-to-end journeys that drive the real panel
 controls: apply a theme, reload and find it still there, import a friend's share code,
 capture a page, delete a theme, edit an element and find the edit again after a reload, and
 hand the panel a hostile theme to see it stay intact.

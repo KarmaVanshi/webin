@@ -20,7 +20,7 @@
  *      their back is not.
  */
 
-import { parseColor, toCss, luminance, contrastRatio } from './color.js';
+import { parseColor, toCss, luminance, contrastRatio, flatten } from './color.js';
 
 /** Roles a theme needs, in the order the adapters try to fill them. */
 const ROLES = ['background', 'surface', 'text', 'textMuted', 'accent', 'onAccent', 'border'];
@@ -433,6 +433,56 @@ const VSCODE_MAP = {
   border: ['panel.border', 'editorGroup.border', 'contrastBorder', 'input.border'],
 };
 
+/**
+ * The palette a VS Code theme file *shows*, not the subset it declares.
+ *
+ * VS Code's own "Developer: Generate Color Theme From Current Settings" writes the whole
+ * resolved palette and then comments out every value that came from a built-in default,
+ * leaving a handful of live declarations behind. Read as JSONC, that file is a theme of
+ * eleven colours. Read the way the person exporting it reads it, it is the complete
+ * palette of the theme they were looking at when they exported.
+ *
+ * So the commented declarations are harvested as well. Anything the file states outright
+ * still wins, because that is the part the theme's author chose rather than inherited.
+ */
+function vsCodeColours(json, raw) {
+  const declared = (json?.colors && typeof json.colors === 'object') ? json.colors : {};
+  if (!raw.includes('//')) return declared;
+
+  // Only comments that are shaped like a declaration are revived; prose stays a comment.
+  // If reviving them yields something that will not parse, `parseJsonish` gives up and the
+  // file is read exactly as it was before.
+  const revived = parseJsonish(raw.replace(/^([ \t]*)\/\/(?=[ \t]*"[^"\n]+"[ \t]*:)/gm, '$1'));
+  const inherited = revived?.colors;
+  if (!inherited || typeof inherited !== 'object') return declared;
+  return { ...inherited, ...declared };
+}
+
+/** Below this, an accent is the same colour as the page it is sitting on. */
+const ACCENT_MIN_CONTRAST = 1.5;
+
+/**
+ * Whether a colour can actually do the job of the role it was read for.
+ *
+ * An editor gets away with things a web page does not. VS Code's high-contrast buttons are
+ * black on a black canvas, told apart by a bright border — but a page has nothing to draw
+ * that border on, so taking `button.background` at face value gives an accent nobody can
+ * see. Where a candidate cannot work, the next key in the role's list gets its turn, and if
+ * none of them can, the role is derived like any other missing one.
+ */
+function vsCodeRoleWorks(role, colour, palette) {
+  const against = role === 'accent' ? palette.background
+    : role === 'onAccent' ? palette.accent
+      : null;
+  if (!against) return true;
+  const front = parseColor(colour);
+  const behind = parseColor(against);
+  // Not a pair we can judge is not a pair we refuse.
+  if (!front || !behind) return true;
+  const ratio = contrastRatio(flatten(front, behind), behind);
+  return ratio >= (role === 'accent' ? ACCENT_MIN_CONTRAST : 4.5);
+}
+
 function fromVsCode(json, name) {
   const colors = json.colors ?? {};
   const palette = {};
@@ -440,7 +490,10 @@ function fromVsCode(json, name) {
   for (const role of ROLES) {
     for (const key of VSCODE_MAP[role] ?? []) {
       const colour = readColorValue(colors[key]);
-      if (colour) { palette[role] = colour; inferred.push(`${role} ← ${key}`); break; }
+      if (!colour || !vsCodeRoleWorks(role, colour, palette)) continue;
+      palette[role] = colour;
+      inferred.push(`${role} ← ${key}`);
+      break;
     }
   }
   const candidate = candidateFrom({
@@ -557,7 +610,7 @@ export function adaptForeignThemes(text, { name = 'Imported theme' } = {}) {
   const json = parseJsonish(raw);
 
   switch (format) {
-    case 'vscode': return fromVsCode(json, name);
+    case 'vscode': return fromVsCode({ ...json, colors: vsCodeColours(json, raw) }, name);
     case 'base16': return fromBase16(json ?? raw, name);
     case 'terminal': return fromTerminal(json, name);
     case 'dtcg': return fromDesignTokens(json, name);

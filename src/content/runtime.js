@@ -133,8 +133,20 @@ export class Webin {
     this.#panel.mount(await this.#panelState());
   }
 
+  /**
+   * Closing the panel also leaves edit mode. The editor is a separate object with its own
+   * capture-phase listeners on the document, so unmounting the panel on its own would take
+   * the controls away and leave the picker, the resize grips and the overlay still live on
+   * a page with nothing on screen to explain them. `exit()` does not revert anything, so
+   * the work stays applied — only the editing stops.
+   */
   close() {
+    // Unmount first: `exit()` emits `change`, and that handler skips a panel that has gone.
     this.#panel.unmount();
+    this.#editor?.exit();
+    // Panel state outlives the unmount, so a close from the inspector would otherwise
+    // reopen onto an inspector wired to an editor that is no longer running.
+    this.#panel.setState({ view: 'gallery', menuOpen: false });
   }
 
   /** Full teardown: panel gone, theme reverted, observers stopped. */

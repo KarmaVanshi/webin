@@ -10,7 +10,7 @@ import { makeDom, stubLayout, flush, until } from './helpers.mjs';
 import { MemoryBackend } from '../src/storage/bridge.js';
 import { encodeShareCode } from '../src/shared/theme-format.js';
 import { presetById } from '../src/themes/library.js';
-import { TOKEN_ATTR } from '../src/shared/types.js';
+import { OWNED_ATTR, TOKEN_ATTR } from '../src/shared/types.js';
 
 const PAGE = `<html><body style="background-color:#ffffff">
   <header style="background-color:#f2f2f2;color:#0f0f0f"><h1>A website</h1></header>
@@ -339,6 +339,50 @@ test('leaving edit mode keeps your work; resetting the page does not', async () 
   // Closing the editor is what takes the last trace away.
   webin.destroy();
   assert.equal(dom.window.document.getElementById('webin-overrides'), null);
+});
+
+test('closing the panel from edit mode stops the editing, and keeps the work', async () => {
+  const backend = new MemoryBackend();
+  const { dom, webin } = await makeRuntime(backend);
+  await webin.boot();
+  await webin.open();
+
+  await click(webin.panel.shadow, '[data-action="mode"][data-value="edit"]');
+  const header = dom.window.document.querySelector('header');
+  webin.editor.select(header);
+  await flush();
+  webin.editor.setProperty('background-color', '#123456');
+  await click(webin.panel.shadow, '[data-action="save"]');
+
+  const doc = dom.window.document;
+  assert.equal(webin.editor.state().mode, 'design', 'editing before the close');
+  assert.equal(doc.querySelectorAll(`div[${OWNED_ATTR}]`).length, 2,
+    'panel host and overlay host are both up');
+
+  // Close the way the X button does.
+  await click(webin.panel.shadow, '[data-action="close"]');
+
+  assert.equal(webin.panel.visible, false, 'the panel is gone');
+  assert.equal(webin.editor.state().mode, 'off', 'and the editor has left edit mode');
+  assert.equal(webin.editor.state().selection, null, 'nothing is selected any more');
+  assert.equal(doc.querySelectorAll(`div[${OWNED_ATTR}]`).length, 0,
+    'no panel host and no overlay host left on the page');
+
+  // The picker is deaf: a press on the page selects nothing.
+  header.dispatchEvent(new dom.window.MouseEvent('pointerdown', { bubbles: true }));
+  header.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  await flush();
+  assert.equal(webin.editor.state().selection, null, 'clicking the page no longer selects');
+
+  // But the work survives — closing is not undoing.
+  assert.match(doc.getElementById('webin-overrides').textContent, /#123456/,
+    'the saved edit is still applied');
+
+  // Reopening lands on the gallery, not on an inspector with no editor behind it.
+  await webin.open();
+  assert.equal(webin.panel.state.view, 'gallery');
+  assert.ok(webin.panel.shadow.querySelector('.wb-card'), 'the gallery is what comes back');
+  webin.destroy();
 });
 
 test('a theme and a hand edit can both be on, and the hand edit wins', async () => {

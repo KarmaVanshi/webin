@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { sniffFormat, adaptForeignThemes, readColorValue } from '../src/shared/foreign-themes.js';
+import { sniffFormat, adaptForeignThemes, readColorValue, stripJsonc } from '../src/shared/foreign-themes.js';
 import { parseThemeInput } from '../src/shared/theme-format.js';
 import { parseColor, toHex, contrastRatio } from '../src/shared/color.js';
 
@@ -124,6 +124,77 @@ test('a VS Code colour theme becomes a page theme', () => {
   assert.equal(theme.palette.text, '#d6deeb');
   assert.equal(theme.palette.accent, '#7e57c2');
   assert.equal(theme.palette.border, '#122d42');
+});
+
+// ─── JSONC ──────────────────────────────────────────────────────────────────
+
+// What VS Code's own "Generate Color Theme From Current Settings" writes: a `//` inside
+// the very first string, every inherited default commented out, and — because the last
+// live declaration keeps its comma — a trailing comma once those comments come away.
+const VSCODE_JSONC = `{
+	// Dark High Contrast, as VS Code exports it
+	"$schema": "vscode://schemas/color-theme",
+	"name": "Dark High Contrast",
+	"type": "hcDark",
+	"colors": {
+		"editor.background": "#000000",
+		"editor.foreground": "#ffffff", // the canvas
+		"textLink.foreground": "#21a6ff",
+		"panel.border": "#6fc3df",
+		//"activityBar.background": "#000000",
+		//"widget.shadow": null
+	},
+	/* syntax colours are not read, but they must not break the parse */
+	"tokenColors": [{ "scope": "comment", "settings": { "foreground": "#7ca668" } }],
+}`;
+
+test('a VS Code theme with comments and trailing commas still reads', () => {
+  assert.equal(sniffFormat(VSCODE_JSONC), 'vscode', 'sniffing survives the comments');
+  const { themes, error, source } = importAll(VSCODE_JSONC);
+  assert.equal(error, null);
+  assert.equal(source, 'vscode');
+  const theme = themes[0];
+  assert.equal(theme.name, 'Dark High Contrast');
+  assert.equal(theme.palette.background, '#000000');
+  assert.equal(theme.palette.text, '#ffffff');
+  assert.equal(theme.palette.accent, '#21a6ff', 'the link colour, since no button is declared');
+  assert.equal(theme.palette.border, '#6fc3df');
+});
+
+test('a comment marker inside a string is left alone', () => {
+  // The trap: `vscode://schemas/...` is not a comment, and a line-wise regex eats it.
+  const cleaned = stripJsonc(VSCODE_JSONC);
+  assert.match(cleaned, /"vscode:\/\/schemas\/color-theme"/, 'the schema URL is intact');
+  assert.doesNotMatch(cleaned, /Dark High Contrast, as VS Code exports it/, 'the comment is gone');
+  assert.equal(JSON.parse(cleaned).$schema, 'vscode://schemas/color-theme');
+});
+
+test('an escaped quote does not end the string it is in', () => {
+  const source = '{"name": "a \\" // not a comment", "colors": {"editor.background": "#101010"}}';
+  assert.equal(JSON.parse(stripJsonc(source)).name, 'a " // not a comment');
+  assert.equal(sniffFormat(source), 'vscode');
+});
+
+test('valid JSON is never put through the stripper', () => {
+  // A theme whose *name* contains a comment marker must survive untouched.
+  const source = JSON.stringify({
+    name: 'https://example.com/theme',
+    colors: { 'editor.background': '#202020', 'editor.foreground': '#fafafa' },
+  });
+  const { themes, error } = importAll(source);
+  assert.equal(error, null);
+  assert.equal(themes[0].name, 'https://example.com/theme');
+});
+
+test('a stylesheet that opens with a block comment is still a stylesheet', () => {
+  // Sniffing tries JSON on everything now, so CSS has to fall through rather than fail.
+  const css = '/* Solarized, ported */\n:root { --background: #002b36; --foreground: #839496; }';
+  assert.equal(sniffFormat(css), 'css-vars');
+});
+
+test('genuinely broken JSON is still refused', () => {
+  assert.equal(sniffFormat('{"colors": {"editor.background": '), null);
+  assert.equal(adaptForeignThemes('{"colors": {"editor.background": '), null);
 });
 
 // ─── base16 ─────────────────────────────────────────────────────────────────

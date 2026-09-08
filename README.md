@@ -10,7 +10,7 @@ it to a friend as a single line of text.
 ```
 Load it:   chrome://extensions → Developer mode → Load unpacked → this folder
 Open it:   click the toolbar icon, or Alt+Shift+E
-Test it:   npm test          (148 tests, jsdom)
+Test it:   npm test          (155 tests, jsdom)
 Prove it:  npm run verify    (real Chromium, local fixture + youtube.com)
 ```
 
@@ -197,7 +197,7 @@ rather than from a file extension, because when you paste into a textarea there 
 extension to go on — a `.json` that is really a VS Code theme and a `.json` that is really
 a base16 scheme need different readers.
 
-**Choose a file.** `.json`, `.css`, `.txt`, `.yaml` and `.yml`. It is read in the browser;
+**Choose a file.** `.json`, `.jsonc`, `.css`, `.txt`, `.yaml` and `.yml`. It is read in the browser;
 nothing is uploaded.
 
 **Fetch an address.** Type a URL and Webin goes and gets it — `example.com/theme.css` is
@@ -273,9 +273,18 @@ would recognise a theme by, but a web page has no syntax to highlight. A theme t
 little beyond `tokenColors` therefore imports with several roles derived, and the preview
 will say which.
 
-Many of these files are JSONC — `//` comments and trailing commas. That is not JSON, so it
-will not parse and Webin will tell you it could not read it. Strip the comments, or use the
-published build from the theme's repository.
+Many of these files are JSONC — `//` and block comments, and trailing commas — which is
+not JSON. They are read anyway. Strict JSON is tried first, so a file that already parses
+is never touched; only when that fails are comments taken out and a trailing comma
+forgiven. The stripper tracks strings and escapes, because `"$schema":
+"vscode://schemas/color-theme"` opens every generated theme file and a line-wise regex
+would eat half of it.
+
+One thing worth knowing about VS Code's own *Developer: Generate Color Theme From Current
+Settings*: it writes out the whole palette but comments out every value that came from a
+default, leaving only what the theme itself declared. That is a handful of colours, not a
+theme, so it imports with most roles derived. Uncomment the block before importing if you
+want the palette you can actually see on screen.
 
 ### A base16 or base24 scheme
 
@@ -426,7 +435,7 @@ src/
     controls.js             the control library the inspector is built from
   storage/                  chrome.storage behind a plain key/value interface
 
-test/        148 tests — format, library, engine, store, panel, identity, editor, journeys
+test/        155 tests — format, library, engine, store, panel, identity, editor, journeys
 tools/       browser.mjs (a small CDP client) and verify.mjs (the real-browser checks)
 fixtures/    a page built the awkward way: custom properties, shadow roots, pushState
 attic/       the previous build, kept for reference; the editor above was rebuilt from it
@@ -436,7 +445,7 @@ attic/       the previous build, kept for reference; the editor above was rebuil
 
 ## Verification
 
-`npm test` runs 148 tests in jsdom, including end-to-end journeys that drive the real panel
+`npm test` runs 155 tests in jsdom, including end-to-end journeys that drive the real panel
 controls: apply a theme, reload and find it still there, import a friend's share code,
 capture a page, delete a theme, edit an element and find the edit again after a reload, and
 hand the panel a hostile theme to see it stay intact.

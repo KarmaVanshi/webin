@@ -87,7 +87,7 @@ export class Panel extends Emitter {
 
     const file = this.#doc.createElement('input');
     file.type = 'file';
-    file.accept = '.json,.css,.txt,.yaml,.yml,application/json,text/css,text/plain';
+    file.accept = '.json,.jsonc,.css,.txt,.yaml,.yml,application/json,text/css,text/plain';
     file.hidden = true;
     // Opened from the Import sheet's button rather than shown, but a control with no name
     // is still a control with no name.

@@ -120,6 +120,69 @@ function readLength(raw) {
 // ─── Format sniffing ────────────────────────────────────────────────────────
 
 /**
+ * JSON with the things people actually write in it.
+ *
+ * VS Code themes, and most editor config, are JSONC: `//` and block comments, and trailing
+ * commas. That is not JSON, so `JSON.parse` refuses it — and it refused it during
+ * *sniffing*, which meant a commented theme came back not as a broken VS Code theme but as
+ * a file of no recognised kind at all.
+ *
+ * The scan has to know where strings are. `"$schema": "vscode://schemas/color-theme"` is
+ * the first line of every generated VS Code theme, and a regex that strips `//` to the end
+ * of the line eats half of it.
+ */
+export function stripJsonc(text) {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+    if (inString) {
+      // A backslash escapes whatever follows, a closing quote included, so both go through.
+      if (char === '\\') { out += char + (next ?? ''); i += 1; continue; }
+      if (char === '"') inString = false;
+      out += char;
+      continue;
+    }
+    if (char === '"') { inString = true; out += char; continue; }
+    if (char === '/' && next === '/') {
+      while (i < text.length && text[i] !== '\n') i += 1;
+      out += '\n';                       // keep the line count, so parse errors still point somewhere
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i += 1;
+      i += 1;
+      continue;
+    }
+    out += char;
+  }
+  // Taking comments out routinely manufactures a trailing comma: the last live declaration
+  // ends in one and everything after it was commented out. That is the common shape of a
+  // theme exported by VS Code's own "Generate Color Theme From Current Settings".
+  return out.replace(/,(\s*[}\]])/g, '$1');
+}
+
+/**
+ * Reads JSON, and JSONC if plain JSON will not have it. Strict first, so a file that parses
+ * today is never put through the stripper and cannot be changed by it. Returns `undefined`
+ * rather than `null` when the text is not JSON at all, because `null` is a thing JSON says.
+ */
+function parseJsonish(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Might be JSONC. Fall through.
+  }
+  try {
+    return JSON.parse(stripJsonc(raw));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * What kind of file this is, from its content rather than its extension.
  *
  * People paste theme files into a textarea; there is no extension to go on, and a
@@ -130,15 +193,11 @@ export function sniffFormat(text) {
   const raw = String(text ?? '').trim();
   if (!raw) return null;
 
-  if (raw.startsWith('{') || raw.startsWith('[')) {
-    let json;
-    try {
-      json = JSON.parse(raw);
-    } catch {
-      return null;
-    }
-    return sniffJson(json);
-  }
+  // No `starts with {` gate: a JSONC file may open with a comment. Anything that does not
+  // read as JSON falls through to the text formats below, which is where a stylesheet
+  // beginning with its own block comment needs to end up.
+  const json = parseJsonish(raw);
+  if (json !== undefined) return sniffJson(json);
 
   if (/base0[0-9a-f]\s*:/i.test(raw)) return 'base16';
   if (/--[\w-]+\s*:/.test(raw) || /@plugin\s+["']daisyui/.test(raw)) return 'css-vars';
@@ -495,14 +554,7 @@ export function adaptForeignThemes(text, { name = 'Imported theme' } = {}) {
   const format = sniffFormat(raw);
   if (!format || format === 'webin') return null;
 
-  let json = null;
-  if (raw.startsWith('{') || raw.startsWith('[')) {
-    try {
-      json = JSON.parse(raw);
-    } catch {
-      return null;
-    }
-  }
+  const json = parseJsonish(raw);
 
   switch (format) {
     case 'vscode': return fromVsCode(json, name);

@@ -1,9 +1,10 @@
 /**
  * Inspector control widgets (§62).
  *
- * Rendered as HTML strings and driven by event delegation — there is no framework here,
- * and at density 9 a panel is re-rendered wholesale far more cheaply than it would be
- * diffed.
+ * Rendered as HTML strings and driven by event delegation — there is no framework here.
+ * A repaint describes the whole panel every time; the panel then matches that description
+ * against what is already on screen rather than rebuilding it, so a control the user is
+ * holding survives the repaint its own edit caused.
  *
  * Every control follows the same three rules from the design system:
  *   - a visible label, never a placeholder standing in for one;
@@ -15,8 +16,15 @@ import { escapeHtml } from '../shared/util.js';
 import { icon } from './icons.js';
 import { LENGTH_UNITS } from '../shared/css-values.js';
 
-let seq = 0;
-const nextId = () => `webin-c${(seq += 1)}`;
+/**
+ * A control's id, derived from the property it edits (§62).
+ *
+ * It used to be a counter, so every repaint renamed every field. Nothing looked wrong — a
+ * label's `for` was rewritten in the same breath — but the panel finds the control that had
+ * focus by id when it repaints, and an id that has just changed finds nothing. The caret
+ * left the field on every keystroke that reached the page.
+ */
+const fieldId = (prop) => `webin-${String(prop ?? 'field').replace(/[^a-zA-Z0-9-]+/g, '-')}`;
 
 /** Mixed-value marker for multi-selection (§47). */
 export const MIXED = Symbol('mixed');
@@ -29,7 +37,7 @@ const mixedAttrs = (value) => (value === MIXED ? ' placeholder="Mixed" data-mixe
  * The unit select is a real control, so an author's `rem` can be kept as `rem`.
  */
 export function numberField({ label, prop, value, unit = 'px', units = LENGTH_UNITS, step = 1, min, max, hint }) {
-  const id = nextId();
+  const id = fieldId(prop);
   const numeric = value === MIXED ? '' : value;
   return `
 <div class="webin-row" data-row="${escapeHtml(prop)}">
@@ -51,7 +59,7 @@ export function numberField({ label, prop, value, unit = 'px', units = LENGTH_UN
 
 /** Free text — font family, grid template, and other values with no numeric form. */
 export function textField({ label, prop, value, mono = false, hint, placeholder = '' }) {
-  const id = nextId();
+  const id = fieldId(prop);
   return `
 <div class="webin-row" data-row="${escapeHtml(prop)}">
   <label class="webin-label" for="${id}">${escapeHtml(label)}</label>
@@ -70,7 +78,7 @@ export function textField({ label, prop, value, mono = false, hint, placeholder 
  * alone cannot express alpha.
  */
 export function colorField({ label, prop, value, swatch, hint }) {
-  const id = nextId();
+  const id = fieldId(prop);
   const literal = display(value);
   return `
 <div class="webin-row" data-row="${escapeHtml(prop)}">
@@ -111,7 +119,7 @@ export function segmented({ label, prop, value, options, compact = false }) {
 
 /** Dropdown for larger closed sets (display, position, font weight). */
 export function selectField({ label, prop, value, options, hint }) {
-  const id = nextId();
+  const id = fieldId(prop);
   const isMixed = value === MIXED;
   return `
 <div class="webin-row" data-row="${escapeHtml(prop)}">
@@ -132,7 +140,7 @@ export function selectField({ label, prop, value, options, hint }) {
 
 /** Slider paired with a numeric readout — the concept asks for both together (§22). */
 export function sliderField({ label, prop, value, min = 0, max = 100, step = 1, suffix = '' }) {
-  const id = nextId();
+  const id = fieldId(prop);
   const numeric = value === MIXED ? min : Number(value ?? min);
   return `
 <div class="webin-row" data-row="${escapeHtml(prop)}">

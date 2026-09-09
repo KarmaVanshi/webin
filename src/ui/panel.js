@@ -147,15 +147,16 @@ export class Panel extends Emitter {
   /**
    * Merges state and shows the result.
    *
-   * A repaint rebuilds the panel's whole subtree, which is fine when the panel is showing
-   * something else afterwards and quietly awful when it is not: the gallery's scroll
-   * position goes back to the top, whatever had keyboard focus loses it, and every hover
-   * and transition restarts. Applying a theme used to do that three times over — once for
-   * the new tick, once for the toast, and once more when the toast expired a few seconds
-   * later, so the panel appeared to refresh itself long after the click.
+   * A repaint used to rebuild the panel's whole subtree, which is fine when the panel is
+   * showing something else afterwards and quietly awful when it is not: the gallery's
+   * scroll position goes back to the top, whatever had keyboard focus loses it, and every
+   * hover and transition restarts. Applying a theme used to do that three times over —
+   * once for the new tick, once for the toast, and once more when the toast expired a few
+   * seconds later, so the panel appeared to refresh itself long after the click.
    *
-   * So a change that alters no structure is applied to the DOM directly, and only a change
-   * that genuinely rearranges the panel repaints it.
+   * Two things answer that now. A change that alters no structure is applied to the DOM
+   * directly, so it never reaches `render` at all; and `render` itself reconciles rather
+   * than rebuilds, so even a real repaint keeps the nodes it still wants.
    */
   setState(patch = {}) {
     const changed = Object.keys(patch).filter((key) => !settled(this.#state[key], patch[key]));
@@ -241,7 +242,7 @@ export class Panel extends Emitter {
     // than arriving at the top of it.
     const staying = this.#root.querySelector('.wb-panel')?.dataset.view === s.view;
     const scrolled = staying ? this.#root.querySelector('.wb-body')?.scrollTop ?? 0 : 0;
-    this.#root.innerHTML = `
+    reconcile(this.#root, `
 <div class="wb-panel" data-side="${s.side === 'left' ? 'left' : 'right'}"
   data-view="${s.view}" role="dialog" aria-label="Webin" tabindex="-1">
   ${header(s)}
@@ -254,17 +255,19 @@ export class Panel extends Emitter {
     : gallery(s)}</div>
   ${footer(s)}
   ${s.toast ? toast(s.toast) : ''}
-</div>`;
+</div>`);
 
     const body = this.#root.querySelector('.wb-body');
     if (body && scrolled) body.scrollTop = scrolled;
 
     // A field the user was in keeps the caret; a field that has just appeared takes it, so
     // opening the rename sheet lands you in the name rather than one Tab away from it.
+    // Reconciling means the first case usually needs nothing done to it — the field was
+    // never removed — but a change of view really does build new controls.
     const restore = focused
       ? this.#root.querySelector(focused)
-      : this.#root.querySelector('[data-autofocus]');
-    if (restore) {
+      : (staying ? null : this.#root.querySelector('[data-autofocus]'));
+    if (restore && restore !== this.#shadow?.activeElement) {
       restore.focus({ preventScroll: true });
       if (!focused && typeof restore.select === 'function') restore.select();
     }
@@ -706,4 +709,104 @@ function footer(s) {
 function toast(t) {
   return `<div class="wb-toast${t.tone === 'error' ? ' wb-toast--error' : ''}" role="status" aria-live="polite">
     ${icon(t.tone === 'error' ? 'warning' : 'info', 13)}<span>${escapeHtml(t.message)}</span></div>`;
+}
+
+/**
+ * Redraws a container to match new HTML, keeping every node that is still wanted.
+ *
+ * `innerHTML =` is the obvious way to repaint, and it is what the panel used to do. It is
+ * also why editing jittered. The panel repaints after every change, and a repaint threw
+ * away the very control the change had come from: the caret went with it, a hover or a
+ * transition restarted from nothing, and an open colour picker was left holding an input
+ * that was no longer in the document — so the first drag of a colour applied and every
+ * drag after it went nowhere at all.
+ *
+ * So the new markup is built as before and then *matched* against what is on screen: a
+ * node of the same kind in the same place is updated in place, anything else is replaced,
+ * and the tail is trimmed. The panel still has exactly one description of what it should
+ * look like — this only changes how that description reaches the DOM.
+ */
+function reconcile(container, html) {
+  const scratch = container.ownerDocument.createElement('div');
+  scratch.innerHTML = html;
+  matchChildren(container, scratch);
+}
+
+function matchChildren(current, next) {
+  const have = [...current.childNodes];
+  const want = [...next.childNodes];
+  for (let i = 0; i < want.length; i += 1) {
+    const before = have[i];
+    if (!before) current.appendChild(want[i]);
+    else if (alike(before, want[i])) matchNode(before, want[i]);
+    else current.replaceChild(want[i], before);
+  }
+  for (let i = want.length; i < have.length; i += 1) have[i].remove();
+}
+
+/**
+ * Whether an existing node can become the wanted one.
+ *
+ * Same kind, same tag, and the same job: a row is identified by what it edits, so a
+ * control is never quietly rewritten into a control for something else — the values would
+ * arrive at the right element and mean the wrong property.
+ *
+ * The base class counts as part of that job. Every template here writes its own class
+ * first and any state class after it, so `wb-card is-on` is still a card — but the menu
+ * appearing above the body is not the body, and matching by position alone would have
+ * patched one into the other and shifted everything below.
+ */
+const IDENTITY = ['data-control', 'data-prop', 'data-side', 'data-action', 'data-section', 'type'];
+
+const baseClass = (node) => (node.getAttribute('class') ?? '').trim().split(/\s+/)[0] ?? '';
+
+function alike(a, b) {
+  if (a.nodeType !== b.nodeType) return false;
+  if (a.nodeType !== 1) return true;
+  if (a.tagName !== b.tagName) return false;
+  if (baseClass(a) !== baseClass(b)) return false;
+  return IDENTITY.every((name) => a.getAttribute(name) === b.getAttribute(name));
+}
+
+function matchNode(current, next) {
+  if (current.nodeType !== 1) {
+    if (current.nodeValue !== next.nodeValue) current.nodeValue = next.nodeValue;
+    return;
+  }
+
+  for (const { name } of [...current.attributes]) {
+    if (!next.hasAttribute(name)) current.removeAttribute(name);
+  }
+  for (const { name, value } of next.attributes) {
+    if (current.getAttribute(name) !== value) current.setAttribute(name, value);
+  }
+
+  // A field the user is in is the one thing on screen the panel does not get to describe:
+  // what they have typed, or the colour they are still dragging towards, is the truth
+  // until they are done with it.
+  const editing = current.getRootNode?.()?.activeElement === current;
+
+  if (current.tagName === 'TEXTAREA') {
+    const text = next.textContent;
+    if (!editing && current.value !== text) current.value = text;
+    return;
+  }
+
+  matchChildren(current, next);
+
+  if (editing) return;
+  if (current.tagName === 'INPUT') {
+    if (current.type === 'checkbox' || current.type === 'radio') {
+      const on = next.hasAttribute('checked');
+      if (current.checked !== on) current.checked = on;
+      return;
+    }
+    const value = next.getAttribute('value') ?? '';
+    // Setting `value` on an input the user is not in is what puts an undone change back on
+    // screen; setting it needlessly would drop the selection inside it.
+    if (current.value !== value) current.value = value;
+  } else if (current.tagName === 'SELECT') {
+    const chosen = [...current.options].find((option) => option.hasAttribute('selected'));
+    if (chosen && current.value !== chosen.value) current.value = chosen.value;
+  }
 }

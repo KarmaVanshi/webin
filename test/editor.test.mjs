@@ -236,3 +236,85 @@ test('an edited heading still matches itself after a reload', async () => {
   first.doc.dispatchEvent(new first.dom.window.Event('x'));  // no-op, keeps jsdom happy
   first.editor.destroy();
 });
+
+test('the text inside a link is editable, wrapped or not', async () => {
+  // The old rule was one text node and no elements at all, which is true of a bare
+  // paragraph and of almost nothing in a real navigation. Every shape below says exactly
+  // one thing, and every one of them used to be refused.
+  const { doc } = await makeEditor();
+  const { singleTextNode } = await import('../src/editor/overrides.js');
+  const html = `
+    <li id="l1"><a href="/a">Plain</a></li>
+    <a id="l2" href="/b"><span>Wrapped</span></a>
+    <a id="l3" href="/c"><svg></svg>Beside an icon</a>
+    <h2 id="l4"><a href="/d">A heading that is a link</a></h2>`;
+  const holder = doc.createElement('div');
+  holder.innerHTML = html;
+  doc.body.append(holder);
+
+  for (const [id, words] of [['l1', 'Plain'], ['l2', 'Wrapped'], ['l3', 'Beside an icon'], ['l4', 'A heading that is a link']]) {
+    const node = singleTextNode(doc.getElementById(id));
+    assert.ok(node, `${id} should offer its text`);
+    assert.equal(node.nodeValue.trim(), words);
+  }
+});
+
+test('an element that says two things is still refused', async () => {
+  // This is the case the original guard was written for, and it has to keep failing:
+  // rewriting a paragraph with a link in the middle of it would take the link with it.
+  const { doc } = await makeEditor();
+  const { singleTextNode } = await import('../src/editor/overrides.js');
+  const holder = doc.createElement('div');
+  holder.innerHTML = '<p id="p">Body text with <a href="/e">a link</a> inside.</p>';
+  doc.body.append(holder);
+
+  assert.equal(singleTextNode(doc.getElementById('p')), null);
+});
+
+test('editing a link\'s words leaves the link, its wrapper and its icon alone', async () => {
+  const { dom, doc, editor } = await makeEditor();
+  editor.enter(EditMode.DESIGN);
+  const holder = doc.createElement('div');
+  holder.innerHTML = '<a id="lnk" href="/c"><svg></svg>Downloads</a>';
+  doc.body.append(holder);
+  const link = doc.getElementById('lnk');
+
+  editor.select(link);
+  assert.ok(editor.editText(link), 'the words beside an icon are editable');
+
+  // While the edit is open the words have a host of their own, so a browser replacing the
+  // selection cannot take the icon with them.
+  const host = doc.querySelector('[contenteditable]');
+  assert.ok(host, 'something is editable');
+  assert.equal(host.textContent, 'Downloads');
+  assert.equal(host.childNodes.length, 1, 'and it holds the words and nothing else');
+
+  host.firstChild.nodeValue = 'Press kit';
+  host.dispatchEvent(new dom.window.FocusEvent('blur'));
+
+  assert.equal(link.getAttribute('href'), '/c', 'the link is still a link');
+  assert.ok(link.querySelector('svg'), 'the icon survived');
+  assert.equal(link.querySelector('[contenteditable]'), null, 'and nothing was left behind');
+  assert.match(link.textContent, /Press kit/);
+
+  editor.undo();
+  assert.match(link.textContent, /Downloads/, 'and undo puts the words back');
+  assert.ok(link.querySelector('svg'), 'with the icon still there');
+  editor.destroy();
+});
+
+test('a control shows the value the edit actually produced', async () => {
+  // Style writes are batched onto the next frame. The panel used to read the page before
+  // that frame landed, so clicking Centre centred the heading and left the control saying
+  // Left — and it stayed wrong until something else repainted the panel.
+  const { doc, editor } = await makeEditor();
+  editor.enter(EditMode.DESIGN);
+  const title = doc.querySelector('#title');
+  editor.select(title);
+
+  editor.setProperty('text-align', 'center');
+  const sheet = doc.getElementById('webin-overrides');
+  assert.match(sheet.textContent, /text-align: center/, 'the rule is on the page by the time anyone reads it back');
+  assert.equal(editor.state().selection.overrides['text-align'], 'center');
+  editor.destroy();
+});

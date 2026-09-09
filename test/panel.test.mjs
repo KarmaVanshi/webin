@@ -342,12 +342,16 @@ test('setting state to what it already is does nothing at all', async () => {
 });
 
 test('a change that does rearrange the panel still repaints it', async () => {
+  // The body element itself is reused — a repaint reconciles rather than rebuilds, which
+  // is what keeps a control the user is holding alive across it. What has to change is
+  // what the body *contains*.
   const { panel } = await mountPanel();
-  const body = panel.shadow.querySelector('.wb-body');
+  assert.equal(panel.shadow.querySelector('#wb-import'), null);
 
   panel.setState({ view: 'import' });
-  assert.notEqual(panel.shadow.querySelector('.wb-body'), body, 'a new view is a new body');
-  assert.ok(panel.shadow.querySelector('#wb-import'));
+  assert.ok(panel.shadow.querySelector('#wb-import'), 'a new view is a new body');
+  assert.equal(panel.shadow.querySelector('.wb-panel').dataset.view, 'import');
+  assert.equal(panel.shadow.querySelector('.wb-card'), null, 'and the gallery is gone');
 });
 
 test('an open menu is repainted rather than patched behind its own back', async () => {
@@ -358,4 +362,67 @@ test('an open menu is repainted rather than patched behind its own back', async 
 
   panel.setState({ activeId: 'nord' });
   assert.equal(panel.shadow.querySelector('[data-action="share"]').hasAttribute('disabled'), false);
+});
+
+test('a repaint keeps the control the change came from', async () => {
+  // This is what made editing jitter. The panel repaints after every change, and a repaint
+  // used to throw away the very control the change had come from — so the caret left the
+  // field, and an open colour picker was left holding an input no longer in the document.
+  // The first drag of a colour applied and every drag after it went nowhere.
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: { mode: 'design', dirty: false, history: {}, unmatched: 0, selection: selectionDetail() },
+  });
+  const swatch = panel.shadow.querySelector('[data-control="color"][data-prop="color"]');
+  const size = panel.shadow.querySelector('[data-control="number"][data-prop="font-size"]');
+  const body = panel.shadow.querySelector('.wb-body');
+  assert.ok(swatch && size);
+
+  panel.setState({
+    editor: {
+      mode: 'design', dirty: true, history: {}, unmatched: 0,
+      selection: selectionDetail({
+        typography: { fontSize: '22px', fontWeight: '600', lineHeight: '24px', letterSpacing: '0px', textAlign: 'center', color: '#112233' },
+      }),
+    },
+  });
+
+  assert.equal(panel.shadow.querySelector('[data-control="color"][data-prop="color"]'), swatch,
+    'the swatch the picker is attached to is still the one on the page');
+  assert.equal(panel.shadow.querySelector('[data-control="number"][data-prop="font-size"]'), size);
+  assert.equal(panel.shadow.querySelector('.wb-body'), body);
+  assert.equal(size.getAttribute('value'), '22', 'and it is showing the new value');
+});
+
+test('a control keeps its own id from one repaint to the next', async () => {
+  // The panel finds the control that had focus by id. An id that has just been renumbered
+  // finds nothing, so the caret left the field on every change that reached the page.
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: { mode: 'design', dirty: false, history: {}, unmatched: 0, selection: selectionDetail() },
+  });
+  const before = panel.shadow.querySelector('[data-control="number"][data-prop="font-size"]').id;
+  panel.setState({ view: 'gallery' });
+  panel.setState({
+    view: 'edit',
+    editor: { mode: 'design', dirty: true, history: {}, unmatched: 0, selection: selectionDetail() },
+  });
+  const after = panel.shadow.querySelector('[data-control="number"][data-prop="font-size"]').id;
+
+  assert.ok(before, 'the field has an id at all');
+  assert.equal(after, before);
+  assert.ok(panel.shadow.querySelector(`label[for="${after}"]`), 'and its label still points at it');
+});
+
+test('what the user is typing is never overwritten by a repaint', async () => {
+  const { panel } = await mountPanel({ view: 'rename', rename: { id: 'nord', name: 'Nord', error: '' } });
+  const field = panel.shadow.querySelector('#wb-rename');
+  field.focus();
+  field.value = 'Half-typed nam';
+
+  panel.setState({ toast: { tone: 'info', message: 'Saved' } });
+  panel.render();
+
+  assert.equal(panel.shadow.querySelector('#wb-rename'), field);
+  assert.equal(field.value, 'Half-typed nam', 'the half-finished name survived');
 });

@@ -60,6 +60,18 @@ export class OverrideEngine {
   }
 
   /**
+   * Writes pending CSS to the page now rather than on the next frame.
+   *
+   * Style writes are batched so that a drag does not rewrite the sheet fifty times (§71,
+   * §83). At the end of a gesture that batching has to be spent: whatever reads the page
+   * next — the overlay measuring the box, the inspector describing the element — would
+   * otherwise be reading it as it was before the change it has just made.
+   */
+  flush() {
+    this.#stylesheet.flush();
+  }
+
+  /**
    * Applies one change to one element.
    * @returns {{ok:boolean, applied?:string[], rejected?:Array, reason?:string}}
    */
@@ -128,9 +140,9 @@ export class OverrideEngine {
   /**
    * Level 3 — text (§18, §33).
    *
-   * Only the first text node is rewritten, and only when the element's text is a single
-   * node. Rewriting `textContent` would destroy child elements, which would be a
-   * structural edit dressed up as a text edit.
+   * The one text node the element speaks through is rewritten, wherever inside it that
+   * node happens to sit. Rewriting `textContent` would destroy child elements, which would
+   * be a structural edit dressed up as a text edit.
    */
   #applyText(element, change) {
     const target = singleTextNode(element);
@@ -246,13 +258,53 @@ export class OverrideEngine {
   }
 }
 
-/** The single text node of an element, or null when its content is structured. */
+/**
+ * Elements that hold no words of their own.
+ *
+ * An icon beside a label, a line break, a control: none of them is copy, so none of them
+ * makes the label beside them any less a single piece of text.
+ */
+const WORDLESS = new Set([
+  'svg', 'img', 'picture', 'source', 'video', 'audio', 'canvas', 'iframe', 'object', 'embed',
+  'br', 'hr', 'input', 'select', 'textarea', 'script', 'style', 'template', 'noscript',
+]);
+
+/**
+ * The one text node that holds everything an element says, or null when it says several
+ * things (§18).
+ *
+ * The rule used to be that the element had to contain exactly one text node and no
+ * elements at all. That is true of a bare paragraph and of almost nothing else on a real
+ * page: `<li><a>Home</a></li>`, `<h2><a>Our work</a></h2>`, `<a><span>Sign in</span></a>`
+ * and `<a><svg/>Download</a>` each say exactly one thing, and not one of them could be
+ * edited — so the text people most often want to change, the text in their navigation,
+ * was the text the editor refused.
+ *
+ * What actually matters is not how many nodes there are but how many of them speak. An
+ * element with a single non-empty text node anywhere inside it can have that text
+ * rewritten without disturbing one other node, and that is what this returns. A paragraph
+ * with a link in the middle of it has two, is genuinely structured, and is still refused —
+ * which is the case the original guard was written for.
+ */
 export function singleTextNode(element) {
-  const children = [...element.childNodes];
-  const texts = children.filter((n) => n.nodeType === 3 && normaliseText(n.nodeValue));
-  const elements = children.filter((n) => n.nodeType === 1);
-  if (texts.length === 1 && elements.length === 0) return texts[0];
-  return null;
+  if (!element || element.nodeType !== 1) return null;
+  let found = null;
+
+  const walk = (node) => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === 3) {
+        if (!normaliseText(child.nodeValue)) continue;
+        if (found) return false;
+        found = child;
+      } else if (child.nodeType === 1) {
+        if (WORDLESS.has(child.tagName?.toLowerCase())) continue;
+        if (!walk(child)) return false;
+      }
+    }
+    return true;
+  };
+
+  return walk(element) ? found : null;
 }
 
 /** Runs a cascade query that may throw on an exotic page, with a safe default. */

@@ -2,8 +2,17 @@
  * Direct text editing (§18).
  *
  * `contenteditable` is turned on for the duration of the edit and removed afterwards, so
- * the attribute never persists on the page. Only elements holding a single text node are
- * eligible — anything else would risk destroying child elements (see `singleTextNode`).
+ * the attribute never persists on the page. Only elements that say exactly one thing are
+ * eligible — anything else would risk destroying structure the user did not mean to touch
+ * (see `singleTextNode`).
+ *
+ * The edit is anchored on the text node, not on the element. Those are usually the same
+ * thing for a paragraph and almost never the same thing for a link: the words of
+ * `<li><a>Home</a></li>` live two levels down, and `<a><svg/>Download</a>` keeps its icon
+ * as a sibling of the words. So `contenteditable` goes on the element that directly holds
+ * the text, only the text run is selected, and the result is written back into that node —
+ * which is what lets the text inside a link be edited without the link, its wrapper or its
+ * icon being flattened away.
  */
 
 import { Emitter, normaliseText } from '../shared/util.js';
@@ -26,6 +35,11 @@ export class TextEditor extends Emitter {
     return this.#session?.element ?? null;
   }
 
+  /** The element `contenteditable` is actually on — the text's own parent. */
+  get host() {
+    return this.#session?.host ?? null;
+  }
+
   /** True when this element's text can be edited safely. */
   canEdit(element) {
     return Boolean(element && singleTextNode(element));
@@ -43,20 +57,45 @@ export class TextEditor extends Emitter {
       return false;
     }
 
+    // The words may belong to a descendant. Editing there keeps the caret inside the run
+    // the user aimed at and puts the wrapper, and anything beside it, out of reach.
+    const parent = node.parentElement ?? element;
     const original = node.nodeValue;
-    const priorEditable = element.getAttribute('contenteditable');
-    const priorSpellcheck = element.getAttribute('spellcheck');
 
-    element.setAttribute('contenteditable', 'plaintext-only');
-    element.setAttribute('spellcheck', 'false');
-    this.#session = { element, node, original, priorEditable, priorSpellcheck };
+    // When anything else shares that parent — the icon in `<a><svg/>Download</a>` — the
+    // text gets a host of its own for the length of the edit. Chrome deletes the whole
+    // editing host when a replacement covers all of its text, so without this the first
+    // keystroke takes the icon with it. Verified in Chromium, not guessed at: the same
+    // keystroke into a host holding only the words leaves its siblings alone.
+    const wrapper = parent.childNodes.length > 1
+      ? wrap(node, parent)
+      : null;
+    const host = wrapper ?? parent;
 
-    element.addEventListener('keydown', this.#onKey, true);
-    element.addEventListener('blur', this.#onBlur, true);
-    element.addEventListener('paste', this.#onPaste, true);
+    const priorEditable = host.getAttribute('contenteditable');
+    const priorSpellcheck = host.getAttribute('spellcheck');
 
-    element.focus({ preventScroll: true });
-    selectAll(element, this.#view);
+    host.setAttribute('contenteditable', 'plaintext-only');
+    host.setAttribute('spellcheck', 'false');
+    this.#session = {
+      element,
+      host,
+      wrapper,
+      node,
+      original,
+      priorEditable,
+      priorSpellcheck,
+      // What was already inside the host. Anything else found there afterwards was put
+      // there by the browser during the edit, and does not belong to the page.
+      kept: new Set(host.querySelectorAll('*')),
+    };
+
+    host.addEventListener('keydown', this.#onKey, true);
+    host.addEventListener('blur', this.#onBlur, true);
+    host.addEventListener('paste', this.#onPaste, true);
+
+    host.focus({ preventScroll: true });
+    selectText(node, this.#view);
     this.emit('begin', { element, text: original });
     return true;
   }
@@ -67,9 +106,11 @@ export class TextEditor extends Emitter {
     if (!session) return null;
     this.#teardown();
 
-    const text = normaliseText(session.element.textContent);
-    // Restore the node reference: contenteditable may have replaced the text node.
-    session.element.textContent = text;
+    const text = normaliseText(readText(session.host));
+    // contenteditable may have split, merged or replaced the text node; settle the host
+    // back to exactly the shape it had, holding the new words.
+    const node = settle(session, text);
+    if (node) session.node = node;
 
     if (text === normaliseText(session.original)) {
       this.emit('cancel', { element: session.element });
@@ -85,22 +126,22 @@ export class TextEditor extends Emitter {
     const session = this.#session;
     if (!session) return;
     this.#teardown();
-    session.element.textContent = session.original;
+    settle(session, session.original);
     this.emit('cancel', { element: session.element });
   }
 
   #teardown() {
-    const { element, priorEditable, priorSpellcheck } = this.#session;
-    element.removeEventListener('keydown', this.#onKey, true);
-    element.removeEventListener('blur', this.#onBlur, true);
-    element.removeEventListener('paste', this.#onPaste, true);
+    const { host, priorEditable, priorSpellcheck } = this.#session;
+    host.removeEventListener('keydown', this.#onKey, true);
+    host.removeEventListener('blur', this.#onBlur, true);
+    host.removeEventListener('paste', this.#onPaste, true);
 
-    if (priorEditable == null) element.removeAttribute('contenteditable');
-    else element.setAttribute('contenteditable', priorEditable);
-    if (priorSpellcheck == null) element.removeAttribute('spellcheck');
-    else element.setAttribute('spellcheck', priorSpellcheck);
+    if (priorEditable == null) host.removeAttribute('contenteditable');
+    else host.setAttribute('contenteditable', priorEditable);
+    if (priorSpellcheck == null) host.removeAttribute('spellcheck');
+    else host.setAttribute('spellcheck', priorSpellcheck);
 
-    element.blur?.();
+    host.blur?.();
     this.#session = null;
   }
 
@@ -127,9 +168,66 @@ export class TextEditor extends Emitter {
   };
 }
 
-function selectAll(element, view) {
+/** Every text node under a node, in document order. */
+function textNodesIn(root) {
+  const found = [];
+  const walk = (node) => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === 3) found.push(child);
+      else if (child.nodeType === 1) walk(child);
+    }
+  };
+  walk(root);
+  return found;
+}
+
+/** What the host currently says. */
+function readText(host) {
+  return textNodesIn(host).map((node) => node.nodeValue).join('');
+}
+
+/**
+ * Puts the host back the way it was, holding `text`.
+ *
+ * An editing session can leave more behind than the words: a stray `<br>` from a shifted
+ * return, a text node split in two by an insertion. Whatever it left, the host ends up
+ * with the nodes it started with plus one text node — so the page's own structure comes
+ * through the edit untouched, and the change that gets recorded is only the change to the
+ * words.
+ */
+function settle(session, text) {
+  const { host, kept, wrapper } = session;
+  for (const node of [...host.querySelectorAll('*')]) {
+    if (!kept.has(node)) node.remove();
+  }
+
+  const nodes = textNodesIn(host);
+  let target = nodes.includes(session.node) ? session.node : nodes[0];
+  if (target) {
+    for (const node of nodes) if (node !== target) node.remove();
+    target.nodeValue = text;
+  } else {
+    target = host.ownerDocument.createTextNode(text);
+    host.appendChild(target);
+  }
+
+  // The borrowed host goes away again, leaving the page's own markup as it was found.
+  if (wrapper) wrapper.parentNode?.replaceChild(target, wrapper);
+  return target;
+}
+
+/** Gives a text node a host of its own, in the place it already occupies. */
+function wrap(node, parent) {
+  const wrapper = parent.ownerDocument.createElement('span');
+  parent.replaceChild(wrapper, node);
+  wrapper.appendChild(node);
+  return wrapper;
+}
+
+/** Selects the text run itself, so typing replaces the words and nothing beside them. */
+function selectText(node, view) {
   const range = view.document.createRange();
-  range.selectNodeContents(element);
+  range.selectNodeContents(node);
   const selection = view.getSelection();
   selection?.removeAllRanges();
   selection?.addRange(range);

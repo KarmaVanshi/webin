@@ -319,6 +319,13 @@ export class Editor extends Emitter {
     const element = this.#primary();
     if (!element) return;
 
+    // The panel's own presses belong to the panel, and that has to be settled before
+    // anything else looks at where the pointer is. Grips are hit by coordinate, and a grip
+    // drawn on a wide element passes straight under the panel — so asking about grips
+    // first meant that pressing a control there began a resize instead: the swatch never
+    // opened its colour picker, and dragging resized the page behind it.
+    if (event.composedPath?.().some((node) => node?.hasAttribute?.(OWNED_ATTR))) return;
+
     // The grips are hit geometrically rather than by letting the browser route the event,
     // because the overlay is pointer-transparent — it has to be, or it would swallow every
     // click meant for the page. So the grip is never the event's target and asking what
@@ -335,8 +342,9 @@ export class Editor extends Emitter {
       return;
     }
 
-    // The panel's own clicks belong to the panel.
-    if (event.composedPath?.().some((node) => node?.hasAttribute?.(OWNED_ATTR))) return;
+    // While the words are being edited, a press is the caret and a drag is a selection.
+    // Starting a move here would slide the element out from under the sentence.
+    if (this.#textEditor.active) return;
 
     // Dragging starts on the element itself, and only once the pointer has actually
     // travelled — `Interactions` holds a threshold so a click stays a click.
@@ -721,11 +729,18 @@ export class Editor extends Emitter {
   /**
    * Called after anything that changes the page.
    *
-   * `ensureIntact` is not paranoia: a single-page app that swaps its body takes the
+   * The flush comes first, and the order is the point of it. Style writes are batched onto
+   * the next frame, so without it the overlay would measure the old box and the inspector
+   * would describe the old value — clicking Centre would centre the heading and leave the
+   * alignment control still showing Left. Not a slow update but a wrong one, and it stayed
+   * wrong until something else happened to repaint the panel.
+   *
+   * `ensureIntact` is not paranoia either: a single-page app that swaps its body takes the
    * stylesheet with it, and a component rendering late brings a shadow root that has
    * never adopted it. Either one silently stops every override in that subtree.
    */
   #afterEdit() {
+    this.#overrides.flush();
     this.#model.invalidate();
     this.#overlay?.sync();
     this.#overrides.ensureIntact();

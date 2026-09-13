@@ -1,0 +1,315 @@
+{
+  "theme": {
+    "name": "Whispering Forest",
+    "version": "1.0",
+    "mode": "light",
+
+    "mood": [
+      "dreamy",
+      "warm",
+      "nostalgic",
+      "peaceful",
+      "hand-painted",
+      "magical",
+      "nature-inspired"
+    ],
+
+    "colors": {
+      "canvas": "#F4EEDB",
+      "paper": "#FFFDF3",
+      "ink": "#39483B",
+      "mutedInk": "#71806D",
+
+      "forest": "#527A5B",
+      "moss": "#829B6A",
+      "sage": "#B5C59A",
+
+      "sky": "#A9D4E8",
+      "cloud": "#FFFDF4",
+
+      "sunlight": "#F6D98B",
+      "peach": "#E9A978",
+      "blossom": "#E8AFC0",
+
+      "earth": "#A78361",
+      "wood": "#765B43",
+
+      "success": "#71966C",
+      "warning": "#D7A85D",
+      "error": "#B96F67",
+      "info": "#719DB3"
+    },
+
+    "surfaces": {
+      "main": {
+        "background": "#F4EEDB",
+        "opacity": 1
+      },
+
+      "glass": {
+        "background": "rgba(255, 253, 243, 0.72)",
+        "blur": "18px",
+        "border": "rgba(255, 255, 255, 0.65)"
+      },
+
+      "card": {
+        "background": "rgba(255, 253, 243, 0.88)",
+        "border": "rgba(118, 137, 103, 0.18)",
+        "shadow": "0 12px 35px rgba(75, 88, 65, 0.12)"
+      },
+
+      "floating": {
+        "background": "rgba(255, 253, 243, 0.94)",
+        "shadow": "0 18px 45px rgba(63, 76, 57, 0.16)"
+      }
+    },
+
+    "background": {
+      "type": "illustrated_gradient",
+      "base": "#F4EEDB",
+
+      "layers": [
+        {
+          "type": "sky",
+          "position": "top",
+          "color": "#A9D4E8",
+          "opacity": 0.55
+        },
+        {
+          "type": "sunlight",
+          "position": "top-right",
+          "color": "#F6D98B",
+          "opacity": 0.32,
+          "blur": "90px"
+        },
+        {
+          "type": "meadow",
+          "position": "bottom",
+          "color": "#B5C59A",
+          "opacity": 0.28
+        },
+        {
+          "type": "mist",
+          "position": "center",
+          "color": "#FFFDF4",
+          "opacity": 0.38,
+          "blur": "60px"
+        }
+      ]
+    },
+
+    "typography": {
+      "heading": {
+        "family": "Nunito",
+        "weight": 700,
+        "color": "#39483B",
+        "letterSpacing": "-0.02em"
+      },
+
+      "body": {
+        "family": "Nunito",
+        "weight": 400,
+        "color": "#52604F",
+        "lineHeight": 1.65
+      },
+
+      "small": {
+        "family": "Nunito",
+        "weight": 500,
+        "color": "#71806D"
+      }
+    },
+
+    "shape": {
+      "style": "soft_organic",
+
+      "radius": {
+        "tiny": "8px",
+        "small": "12px",
+        "medium": "18px",
+        "large": "28px",
+        "extraLarge": "36px",
+        "pill": "999px"
+      },
+
+      "corners": "rounded",
+      "edges": "soft"
+    },
+
+    "navigation": {
+      "background": "rgba(255, 253, 243, 0.68)",
+      "blur": "22px",
+      "border": "rgba(255, 255, 255, 0.55)",
+
+      "text": "#52604F",
+      "activeText": "#527A5B",
+
+      "activeBackground": "rgba(130, 155, 106, 0.16)",
+
+      "indicator": {
+        "color": "#527A5B",
+        "shape": "pill"
+      }
+    },
+
+    "buttons": {
+      "primary": {
+        "background": "#527A5B",
+        "text": "#FFFDF3",
+        "hover": "#456B4E",
+        "active": "#3D5D45",
+        "radius": "16px",
+        "shadow": "0 7px 18px rgba(82, 122, 91, 0.24)"
+      },
+
+      "secondary": {
+        "background": "#F6D98B",
+        "text": "#4B543F",
+        "hover": "#EFCB76",
+        "radius": "16px"
+      },
+
+      "ghost": {
+        "background": "transparent",
+        "text": "#527A5B",
+        "hover": "rgba(130, 155, 106, 0.12)",
+        "radius": "14px"
+      }
+    },
+
+    "inputs": {
+      "background": "rgba(255, 253, 243, 0.76)",
+      "border": "rgba(82, 122, 91, 0.2)",
+      "focusBorder": "#829B6A",
+      "text": "#39483B",
+      "placeholder": "#9AA18E",
+      "radius": "15px",
+
+      "focusGlow": "0 0 0 4px rgba(130, 155, 106, 0.12)"
+    },
+
+    "cards": {
+      "default": {
+        "background": "rgba(255, 253, 243, 0.84)",
+        "border": "1px solid rgba(82, 122, 91, 0.12)",
+        "radius": "24px",
+        "shadow": "0 10px 30px rgba(75, 88, 65, 0.10)"
+      },
+
+      "hover": {
+        "transform": "translateY(-3px)",
+        "shadow": "0 18px 38px rgba(75, 88, 65, 0.15)"
+      }
+    },
+
+    "illustration": {
+      "style": "soft_hand_painted",
+
+      "lineWork": {
+        "enabled": true,
+        "color": "#64745E",
+        "opacity": 0.32,
+        "width": 1
+      },
+
+      "texture": {
+        "enabled": true,
+        "type": "paper_grain",
+        "opacity": 0.055
+      },
+
+      "details": [
+        "tiny leaves",
+        "soft clouds",
+        "wildflowers",
+        "floating dust particles",
+        "gentle sunlight",
+        "distant hills",
+        "small birds",
+        "tree silhouettes"
+      ]
+    },
+
+    "decorations": {
+      "petals": {
+        "enabled": true,
+        "colors": [
+          "#E8AFC0",
+          "#FFFDF4",
+          "#F6D98B"
+        ],
+        "opacity": 0.55
+      },
+
+      "particles": {
+        "enabled": true,
+        "type": "soft_glow",
+        "opacity": 0.4
+      },
+
+      "fireflies": {
+        "enabled": true,
+        "color": "#F6D98B",
+        "glow": "0 0 12px rgba(246, 217, 139, 0.7)"
+      }
+    },
+
+    "motion": {
+      "philosophy": "gentle_and_natural",
+
+      "default": {
+        "duration": "280ms",
+        "easing": "cubic-bezier(0.22, 1, 0.36, 1)"
+      },
+
+      "hover": {
+        "lift": "translateY(-2px)",
+        "scale": 1.01
+      },
+
+      "pageTransition": {
+        "type": "soft_fade",
+        "duration": "500ms"
+      },
+
+      "ambient": {
+        "enabled": true,
+        "movement": "very_subtle"
+      }
+    },
+
+    "shadows": {
+      "soft": "0 6px 20px rgba(70, 82, 63, 0.08)",
+      "medium": "0 12px 32px rgba(70, 82, 63, 0.12)",
+      "deep": "0 22px 55px rgba(70, 82, 63, 0.17)"
+    },
+
+    "scrollbar": {
+      "track": "transparent",
+      "thumb": "rgba(82, 122, 91, 0.28)",
+      "hover": "rgba(82, 122, 91, 0.45)",
+      "width": "7px",
+      "radius": "999px"
+    },
+
+    "special": {
+      "sunsetMode": {
+        "enabled": true,
+        "sky": "#E8B6A1",
+        "sun": "#F6D98B",
+        "meadow": "#71836A"
+      },
+
+      "nightMode": {
+        "enabled": true,
+        "background": "#182B2A",
+        "surface": "rgba(31, 52, 49, 0.82)",
+        "text": "#F4EEDB",
+        "accent": "#E6C77A",
+        "moonGlow": "rgba(246, 217, 139, 0.22)"
+      }
+    },
+
+    "designPrinciple": "A peaceful illustrated world where the interface feels like a window into a warm, magical countryside rather than a conventional digital UI."
+  }
+}

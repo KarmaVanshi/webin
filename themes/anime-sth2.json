@@ -1,0 +1,193 @@
+{
+  "theme": {
+    "name": "Whispering Forest",
+    "version": "1.0",
+
+    "background": "#F4EEDB",
+    "text": "#39483B",
+
+    "colors": {
+      "background": "#F4EEDB",
+      "text": "#39483B",
+      "textSecondary": "#52604F",
+      "textMuted": "#71806D",
+
+      "primary": "#527A5B",
+      "primaryHover": "#456B4E",
+
+      "secondary": "#829B6A",
+      "accent": "#F6D98B",
+      "accentWarm": "#E9A978",
+      "accentPink": "#E8AFC0",
+
+      "surface": "#FFFDF3",
+      "surfaceGlass": "rgba(255, 253, 243, 0.72)",
+
+      "border": "rgba(82, 122, 91, 0.18)",
+
+      "success": "#71966C",
+      "warning": "#D7A85D",
+      "error": "#B96F67",
+      "info": "#719DB3"
+    },
+
+    "backgroundStyle": {
+      "type": "layered",
+      "base": "#F4EEDB",
+
+      "gradient": "linear-gradient(160deg, #A9D4E8 0%, #F4EEDB 42%, #D9E2BD 100%)",
+
+      "atmosphere": [
+        {
+          "type": "sunlight",
+          "color": "#F6D98B",
+          "opacity": 0.28,
+          "position": "top-right",
+          "blur": "100px"
+        },
+        {
+          "type": "mist",
+          "color": "#FFFDF4",
+          "opacity": 0.35,
+          "position": "center",
+          "blur": "70px"
+        },
+        {
+          "type": "meadow",
+          "color": "#829B6A",
+          "opacity": 0.18,
+          "position": "bottom"
+        }
+      ]
+    },
+
+    "typography": {
+      "fontFamily": "Nunito, sans-serif",
+
+      "heading": {
+        "color": "#39483B",
+        "weight": 700
+      },
+
+      "body": {
+        "color": "#52604F",
+        "weight": 400,
+        "lineHeight": 1.6
+      },
+
+      "muted": {
+        "color": "#71806D"
+      }
+    },
+
+    "surface": {
+      "background": "rgba(255, 253, 243, 0.82)",
+      "border": "1px solid rgba(82, 122, 91, 0.14)",
+      "backdropBlur": "18px",
+      "shadow": "0 12px 35px rgba(75, 88, 65, 0.12)"
+    },
+
+    "card": {
+      "background": "rgba(255, 253, 243, 0.86)",
+      "text": "#39483B",
+      "border": "rgba(82, 122, 91, 0.14)",
+      "radius": "24px",
+      "shadow": "0 10px 30px rgba(75, 88, 65, 0.10)",
+
+      "hover": {
+        "transform": "translateY(-3px)",
+        "shadow": "0 18px 38px rgba(75, 88, 65, 0.15)"
+      }
+    },
+
+    "button": {
+      "primary": {
+        "background": "#527A5B",
+        "text": "#FFFDF3",
+        "hover": "#456B4E",
+        "active": "#3D5D45",
+        "radius": "16px"
+      },
+
+      "secondary": {
+        "background": "#F6D98B",
+        "text": "#4B543F",
+        "hover": "#EFCB76",
+        "radius": "16px"
+      },
+
+      "ghost": {
+        "background": "transparent",
+        "text": "#527A5B",
+        "hover": "rgba(130, 155, 106, 0.12)",
+        "radius": "14px"
+      }
+    },
+
+    "input": {
+      "background": "rgba(255, 253, 243, 0.75)",
+      "text": "#39483B",
+      "placeholder": "#9AA18E",
+      "border": "rgba(82, 122, 91, 0.20)",
+      "focusBorder": "#829B6A",
+      "focusGlow": "0 0 0 4px rgba(130, 155, 106, 0.12)",
+      "radius": "15px"
+    },
+
+    "navigation": {
+      "background": "rgba(255, 253, 243, 0.68)",
+      "text": "#52604F",
+      "activeText": "#527A5B",
+      "activeBackground": "rgba(130, 155, 106, 0.16)",
+      "border": "rgba(255, 255, 255, 0.55)",
+      "backdropBlur": "22px"
+    },
+
+    "decoration": {
+      "style": "soft_hand_painted",
+
+      "elements": [
+        "floating leaves",
+        "small clouds",
+        "wildflowers",
+        "soft sunlight",
+        "distant hills",
+        "tiny birds",
+        "floating particles",
+        "subtle fireflies"
+      ],
+
+      "texture": {
+        "type": "paper_grain",
+        "opacity": 0.04
+      }
+    },
+
+    "shape": {
+      "style": "organic_soft",
+
+      "radius": {
+        "small": "10px",
+        "medium": "16px",
+        "large": "24px",
+        "extraLarge": "32px",
+        "pill": "999px"
+      }
+    },
+
+    "effects": {
+      "glassBlur": "18px",
+      "softShadow": "0 10px 30px rgba(75, 88, 65, 0.12)",
+      "glow": "0 0 25px rgba(246, 217, 139, 0.25)"
+    },
+
+    "motion": {
+      "duration": "280ms",
+      "easing": "cubic-bezier(0.22, 1, 0.36, 1)",
+
+      "hover": {
+        "translateY": "-2px"
+      }
+    }
+  }
+}

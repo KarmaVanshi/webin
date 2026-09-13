@@ -1,0 +1,41 @@
+{
+  "format": "webin-theme",
+  "version": 1,
+  "theme": {
+    "id": "anime-dream",
+    "name": "Anime Dream",
+    "description": "Soft sakura colour under a magical gradient, on frosted panels.",
+    "dark": false,
+
+    "palette": {
+      "background": "#FFF7FC",
+      "surface": "#FFFFFF",
+      "text": "#241B2F",
+      "textMuted": "#6F6278",
+      "accent": "#FF6FAE",
+      "onAccent": "#FFFFFF",
+      "border": "#F0DDEA"
+    },
+
+    "radius": 18,
+    "density": 1,
+    "fontFamily": "Inter, system-ui, sans-serif",
+    "shadow": "glass",
+
+    "effects": {
+      "blur": 18,
+      "surfaceAlpha": 0.72,
+      "glow": true,
+      "weight": 700,
+
+      "backdrop": {
+        "base": "#FFF7FC",
+        "blobs": [
+          { "color": "#FFE8F3", "x": 85, "y": 10, "size": 70 },
+          { "color": "#F2E9FF", "x": 15, "y": 25, "size": 65 },
+          { "color": "#E8F8FF", "x": 50, "y": 100, "size": 70 }
+        ]
+      }
+    }
+  }
+}

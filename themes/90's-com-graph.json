@@ -1,0 +1,81 @@
+{
+  "format": "webin-theme",
+  "version": 1,
+  "theme": {
+    "id": "90s-computer-graphics",
+    "name": "90s Computer Graphics",
+    "description": "A nostalgic 1990s computer graphics aesthetic inspired by CRT monitors, Windows-era interfaces, early 3D rendering, pixel art, and low-resolution multimedia software.",
+    "dark": true,
+    "palette": {
+      "background": "#11151A",
+      "surface": "#20262C",
+      "surfaceAlt": "#2B3239",
+      "primary": "#00FF66",
+      "secondary": "#00C8FF",
+      "accent": "#FF3BF3",
+      "highlight": "#FFFF00",
+      "text": "#F2F2F2",
+      "textMuted": "#A7ADB4",
+      "border": "#69727A",
+      "success": "#00FF66",
+      "warning": "#FFFF00",
+      "danger": "#FF3B30"
+    },
+    "typography": {
+      "fontFamily": "Tahoma, Arial, sans-serif",
+      "headingWeight": 700,
+      "bodyWeight": 400,
+      "letterSpacing": "0px"
+    },
+    "effects": {
+      "borderRadius": "2px",
+      "shadow": "3px 3px 0px #000000",
+      "glow": "0 0 8px rgba(0,255,102,0.35)",
+      "blur": "0px",
+      "texture": "subtle-crt-scanlines"
+    },
+    "components": {
+      "window": {
+        "background": "#20262C",
+        "border": "2px solid #69727A",
+        "titleBar": "#394149",
+        "titleText": "#FFFFFF"
+      },
+      "button": {
+        "background": "#C0C0C0",
+        "text": "#000000",
+        "border": "2px outset #FFFFFF",
+        "hover": "#D8D8D8",
+        "active": "#A0A0A0"
+      },
+      "input": {
+        "background": "#080A0C",
+        "text": "#00FF66",
+        "border": "2px inset #69727A"
+      },
+      "card": {
+        "background": "#20262C",
+        "border": "1px solid #69727A",
+        "shadow": "4px 4px 0px #000000"
+      },
+      "link": {
+        "color": "#00C8FF",
+        "hover": "#FF3BF3"
+      }
+    },
+    "graphics": {
+      "style": "low-poly-retro-digital",
+      "pixelated": true,
+      "dithering": true,
+      "scanlines": true,
+      "chromaticAberration": true,
+      "vignette": true,
+      "noise": "subtle",
+      "resolutionFeel": "640x480"
+    },
+    "gradients": {
+      "primary": "linear-gradient(135deg, #00FF66 0%, #00C8FF 50%, #FF3BF3 100%)",
+      "retro": "linear-gradient(90deg, #FF3BF3 0%, #00C8FF 50%, #00FF66 100%)"
+    }
+  }
+}

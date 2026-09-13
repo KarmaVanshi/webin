@@ -1,0 +1,142 @@
+{
+  "format": "webin-theme",
+  "version": 1,
+  "theme": {
+    "id": "brutalist-white",
+    "name": "Brutalist White",
+    "description": "A stark digital brutalist interface built around a white body background, heavy black typography, rigid borders, raw spacing, and intentionally utilitarian visual hierarchy.",
+    "dark": false,
+
+    "palette": {
+      "background": "#FFFFFF",
+      "surface": "#FFFFFF",
+      "surfaceAlt": "#F2F2F2",
+      "text": "#000000",
+      "textMuted": "#444444",
+      "border": "#000000",
+      "primary": "#000000",
+      "accent": "#FF3B00",
+      "accentText": "#FFFFFF",
+      "selection": "#000000",
+      "selectionText": "#FFFFFF"
+    },
+
+    "typography": {
+      "fontFamily": "Arial, Helvetica, sans-serif",
+      "headingFontFamily": "Arial Black, Arial, Helvetica, sans-serif",
+      "bodyFontSize": "16px",
+      "headingFontWeight": "900",
+      "bodyFontWeight": "700",
+      "letterSpacing": "-0.02em",
+      "lineHeight": "1.35"
+    },
+
+    "background": {
+      "backgroundColor": "#FFFFFF",
+      "backgroundImage": "none",
+      "backgroundRepeat": "no-repeat",
+      "backgroundPosition": "0% 0%",
+      "backgroundSize": "auto",
+      "backgroundAttachment": "scroll",
+      "backgroundClip": "border-box",
+      "backgroundOrigin": "padding-box"
+    },
+
+    "body": {
+      "backgroundColor": "#FFFFFF",
+      "backgroundImage": "none",
+      "backgroundRepeat": "no-repeat",
+      "backgroundPosition": "0% 0%",
+      "backgroundSize": "auto",
+      "backgroundAttachment": "scroll",
+      "backgroundClip": "border-box",
+      "backgroundOrigin": "padding-box",
+      "color": "#000000",
+      "fontFamily": "Arial, Helvetica, sans-serif",
+      "fontWeight": "700"
+    },
+
+    "surfaces": {
+      "backgroundColor": "#FFFFFF",
+      "backgroundImage": "none",
+      "backgroundRepeat": "no-repeat",
+      "backgroundPosition": "0% 0%",
+      "backgroundSize": "auto",
+      "backgroundAttachment": "scroll",
+      "borderWidth": "3px",
+      "borderStyle": "solid",
+      "borderColor": "#000000",
+      "borderRadius": "0px",
+      "boxShadow": "8px 8px 0px #000000"
+    },
+
+    "buttons": {
+      "backgroundColor": "#000000",
+      "backgroundImage": "none",
+      "backgroundRepeat": "no-repeat",
+      "backgroundPosition": "0% 0%",
+      "backgroundSize": "auto",
+      "backgroundAttachment": "scroll",
+      "color": "#FFFFFF",
+      "borderWidth": "3px",
+      "borderStyle": "solid",
+      "borderColor": "#000000",
+      "borderRadius": "0px",
+      "fontWeight": "900",
+      "boxShadow": "5px 5px 0px #FF3B00",
+      "textTransform": "uppercase"
+    },
+
+    "inputs": {
+      "backgroundColor": "#FFFFFF",
+      "backgroundImage": "none",
+      "backgroundRepeat": "no-repeat",
+      "backgroundPosition": "0% 0%",
+      "backgroundSize": "auto",
+      "backgroundAttachment": "scroll",
+      "color": "#000000",
+      "borderWidth": "3px",
+      "borderStyle": "solid",
+      "borderColor": "#000000",
+      "borderRadius": "0px",
+      "boxShadow": "none",
+      "fontWeight": "700"
+    },
+
+    "cards": {
+      "backgroundColor": "#FFFFFF",
+      "backgroundImage": "none",
+      "backgroundRepeat": "no-repeat",
+      "backgroundPosition": "0% 0%",
+      "backgroundSize": "auto",
+      "backgroundAttachment": "scroll",
+      "borderWidth": "3px",
+      "borderStyle": "solid",
+      "borderColor": "#000000",
+      "borderRadius": "0px",
+      "boxShadow": "10px 10px 0px #000000"
+    },
+
+    "navigation": {
+      "backgroundColor": "#FFFFFF",
+      "backgroundImage": "none",
+      "backgroundRepeat": "no-repeat",
+      "backgroundPosition": "0% 0%",
+      "backgroundSize": "auto",
+      "backgroundAttachment": "scroll",
+      "color": "#000000",
+      "borderWidth": "0px 0px 3px 0px",
+      "borderStyle": "solid",
+      "borderColor": "#000000",
+      "borderRadius": "0px"
+    },
+
+    "effects": {
+      "borderRadius": "0px",
+      "boxShadow": "none",
+      "backdropFilter": "none",
+      "opacity": "1",
+      "transition": "none"
+    }
+  }
+}

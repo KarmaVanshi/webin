@@ -1,0 +1,42 @@
+{
+  "format": "webin-theme",
+  "version": 1,
+  "theme": {
+    "id": "anime-night",
+    "name": "Anime Night",
+    "description": "Dreamy anime night theme with deep midnight surfaces, moonlit violet tones, neon pink accents, and subtle cosmic glow.",
+    "dark": true,
+
+    "palette": {
+      "background": "#0D0B1C",
+      "surface": "rgba(24, 20, 43, 0.88)",
+      "text": "#F8F3FF",
+      "textMuted": "#A8A0BC",
+      "accent": "#C77DFF",
+      "onAccent": "#FFFFFF",
+      "border": "rgba(199, 125, 255, 0.20)"
+    },
+
+    "radius": 18,
+    "density": 1.1,
+    "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif",
+    "displayFamily": "system-ui",
+    "shadow": "night",
+
+    "effects": {
+      "borderWidth": "1px",
+      "blur": 20,
+      "surfaceAlpha": 0.88,
+      "gradient": true,
+      "noise": false,
+      "glow": true,
+      "uppercase": false,
+      "tracking": 0.4,
+      "weight": 500,
+
+      "background": "linear-gradient(135deg, rgba(116, 80, 180, 0.14) 0%, rgba(199, 125, 255, 0.08) 45%, rgba(255, 105, 180, 0.06) 100%)"
+    },
+
+    "author": "Anime Night Design System"
+  }
+}

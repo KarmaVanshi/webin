@@ -1,0 +1,141 @@
+{
+  "format": "webin-theme",
+  "version": 1,
+  "theme": {
+    "id": "brutalist-digital",
+    "name": "Brutalist Digital",
+    "description": "Raw digital brutalism with sharp geometry, heavy borders, high contrast and hard shadows while allowing the original webpage background to remain visible.",
+
+    "dark": false,
+
+    "palette": {
+      "background": "transparent",
+      "surface": "rgba(255,255,255,0.08)",
+      "surfaceAlt": "rgba(255,255,255,0.12)",
+      "text": "#FFFFFF",
+      "textMuted": "rgba(255,255,255,0.65)",
+      "border": "#FFFFFF",
+      "primary": "#FFFFFF",
+      "accent": "#FF3B00",
+      "accentAlt": "#D9FF00",
+      "danger": "#FF003C",
+      "success": "#00FF66",
+      "warning": "#FFD400"
+    },
+
+    "background": {
+      "color": "transparent",
+      "opacity": 0,
+      "image": "none",
+      "pattern": "none",
+      "gradient": "none"
+    },
+
+    "text": {
+      "color": "#FFFFFF",
+      "headingColor": "#FFFFFF",
+      "mutedColor": "rgba(255,255,255,0.65)"
+    },
+
+    "typography": {
+      "fontFamily": "Arial, Helvetica, sans-serif",
+      "headingFontFamily": "Arial Black, Arial, Helvetica, sans-serif",
+      "bodyFontFamily": "Arial, Helvetica, sans-serif",
+      "headingWeight": 900,
+      "bodyWeight": 500,
+      "letterSpacing": "-0.02em",
+      "headingLetterSpacing": "-0.05em"
+    },
+
+    "borders": {
+      "width": "2px",
+      "style": "solid",
+      "color": "#FFFFFF",
+      "radius": "0px"
+    },
+
+    "surfaces": {
+      "background": "rgba(0,0,0,0.35)",
+      "border": "2px solid #FFFFFF",
+      "borderRadius": "0px",
+      "shadow": "6px 6px 0px rgba(0,0,0,0.8)",
+      "blur": "0px"
+    },
+
+    "buttons": {
+      "background": "#FFFFFF",
+      "text": "#000000",
+      "border": "2px solid #000000",
+      "borderRadius": "0px",
+      "shadow": "4px 4px 0px #FF3B00",
+      "fontWeight": 900,
+      "hoverBackground": "#FF3B00",
+      "hoverText": "#FFFFFF",
+      "hoverBorder": "#000000",
+      "hoverShadow": "4px 4px 0px #D9FF00",
+      "hoverTransform": "translate(-2px,-2px)"
+    },
+
+    "inputs": {
+      "background": "rgba(0,0,0,0.25)",
+      "text": "#FFFFFF",
+      "placeholder": "rgba(255,255,255,0.5)",
+      "border": "2px solid #FFFFFF",
+      "borderRadius": "0px",
+      "focusBorder": "#D9FF00",
+      "focusShadow": "4px 4px 0px #D9FF00"
+    },
+
+    "cards": {
+      "background": "rgba(0,0,0,0.35)",
+      "text": "#FFFFFF",
+      "border": "2px solid #FFFFFF",
+      "borderRadius": "0px",
+      "shadow": "6px 6px 0px rgba(0,0,0,0.8)",
+      "hoverShadow": "8px 8px 0px #FF3B00",
+      "hoverTransform": "translate(-2px,-2px)"
+    },
+
+    "navigation": {
+      "background": "rgba(0,0,0,0.25)",
+      "text": "#FFFFFF",
+      "border": "0 0 2px 0 solid #FFFFFF",
+      "activeBackground": "#FF3B00",
+      "activeText": "#FFFFFF"
+    },
+
+    "links": {
+      "color": "#D9FF00",
+      "hoverColor": "#FF3B00",
+      "underline": true
+    },
+
+    "scrollbar": {
+      "track": "transparent",
+      "thumb": "#FFFFFF",
+      "hoverThumb": "#FF3B00",
+      "width": "10px"
+    },
+
+    "effects": {
+      "glass": false,
+      "blur": false,
+      "gradient": false,
+      "glow": false,
+      "softShadow": false,
+      "animation": "sharp",
+      "transition": "0.08s ease-out"
+    },
+
+    "design": {
+      "visualStyle": "digital brutalism",
+      "geometry": "hard-edged",
+      "spacing": "compact",
+      "contrast": "extreme",
+      "decoration": "industrial",
+      "depth": "hard-offset-shadows",
+      "corners": "square",
+      "texture": "none"
+    }
+  }
+}

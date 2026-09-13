@@ -1,0 +1,133 @@
+{
+  "format": "webin-theme",
+  "version": 1,
+  "theme": {
+    "id": "whimsical-anime-countryside",
+    "name": "Whimsical Anime Countryside",
+    "description": "A warm hand-painted anime-inspired theme with soft skies, forest greens, cream surfaces, gentle sunlight, and storybook countryside atmosphere.",
+    "dark": false,
+
+    "palette": {
+      "background": "#F7F0DA",
+      "surface": "#FFF9EA",
+      "surfaceAlt": "#E9E7CD",
+      "primary": "#6F8F72",
+      "secondary": "#9DBA8F",
+      "accent": "#E8A86B",
+      "accentSoft": "#F4D5A5",
+      "text": "#3F493D",
+      "textMuted": "#7A806C",
+      "border": "#C8CFB1",
+      "success": "#7FA77B",
+      "warning": "#E5B765",
+      "danger": "#CC7A6F"
+    },
+
+    "typography": {
+      "fontFamily": "\"Nunito\", \"Trebuchet MS\", sans-serif",
+      "headingFontFamily": "\"Quicksand\", \"Nunito\", sans-serif",
+      "fontWeight": 400,
+      "headingWeight": 600,
+      "letterSpacing": "0.01em"
+    },
+
+    "background": {
+      "type": "gradient",
+      "value": "linear-gradient(145deg, #DDEBCF 0%, #F7F0DA 35%, #F6D6AD 70%, #BCD7E8 100%)",
+      "overlay": "radial-gradient(circle at 20% 15%, rgba(255,255,255,0.65), transparent 38%)"
+    },
+
+    "effects": {
+      "blur": "14px",
+      "surfaceOpacity": 0.82,
+      "borderOpacity": 0.55,
+      "shadow": "0 10px 30px rgba(80, 92, 70, 0.15)",
+      "hoverShadow": "0 14px 36px rgba(80, 92, 70, 0.22)",
+      "glow": "0 0 22px rgba(244, 213, 165, 0.25)"
+    },
+
+    "radius": {
+      "small": "10px",
+      "medium": "16px",
+      "large": "24px",
+      "pill": "999px"
+    },
+
+    "components": {
+      "card": {
+        "background": "rgba(255, 249, 234, 0.82)",
+        "border": "1px solid rgba(200, 207, 177, 0.6)",
+        "backdropFilter": "blur(14px)",
+        "boxShadow": "0 10px 30px rgba(80, 92, 70, 0.14)",
+        "borderRadius": "20px"
+      },
+
+      "button": {
+        "background": "#6F8F72",
+        "text": "#FFF9EA",
+        "hoverBackground": "#607C63",
+        "borderRadius": "14px",
+        "boxShadow": "0 5px 14px rgba(111, 143, 114, 0.25)"
+      },
+
+      "buttonSecondary": {
+        "background": "#F4D5A5",
+        "text": "#4E5A46",
+        "hoverBackground": "#EDC48C"
+      },
+
+      "input": {
+        "background": "rgba(255,255,255,0.62)",
+        "text": "#3F493D",
+        "placeholder": "#8B917D",
+        "border": "1px solid rgba(166, 180, 146, 0.65)",
+        "focusBorder": "#86A786",
+        "borderRadius": "13px"
+      },
+
+      "navbar": {
+        "background": "rgba(247, 240, 218, 0.72)",
+        "text": "#3F493D",
+        "border": "1px solid rgba(255,255,255,0.4)",
+        "backdropFilter": "blur(18px)"
+      },
+
+      "sidebar": {
+        "background": "rgba(233, 231, 205, 0.76)",
+        "text": "#465044",
+        "activeBackground": "rgba(111,143,114,0.18)",
+        "activeText": "#4F6E53"
+      },
+
+      "modal": {
+        "background": "rgba(255,249,234,0.92)",
+        "backdropFilter": "blur(22px)",
+        "border": "1px solid rgba(200,207,177,0.6)",
+        "borderRadius": "24px"
+      },
+
+      "tooltip": {
+        "background": "#4A5547",
+        "text": "#FFF9EA"
+      },
+
+      "selection": {
+        "background": "#F4D5A5",
+        "text": "#3F493D"
+      }
+    },
+
+    "scrollbar": {
+      "track": "rgba(233,231,205,0.4)",
+      "thumb": "#A8B99A",
+      "thumbHover": "#879E7D",
+      "radius": "999px"
+    },
+
+    "animation": {
+      "transition": "all 0.28s ease",
+      "hoverTransform": "translateY(-2px)",
+      "softFloat": true
+    }
+  }
+}

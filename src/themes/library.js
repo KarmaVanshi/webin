@@ -84,7 +84,14 @@ const RAW = [
     radius: 18, density: 1.15, fontFamily: SANS, shadow: 'glass',
     effects: {
       blur: 16, surfaceAlpha: 0.18,
-      backdrop: 'radial-gradient(60% 60% at 15% 10%, #4338CA 0%, rgba(67,56,202,0) 60%), radial-gradient(55% 55% at 85% 25%, #DB2777 0%, rgba(219,39,119,0) 60%), radial-gradient(70% 70% at 50% 100%, #0EA5E9 0%, rgba(14,165,233,0) 60%), #101A34',
+      backdrop: {
+        base: '#101A34',
+        blobs: [
+          { color: '#4338CA', x: 15, y: 10, size: 60 },
+          { color: '#DB2777', x: 85, y: 25, size: 55 },
+          { color: '#0EA5E9', x: 50, y: 100, size: 70 },
+        ],
+      },
     },
   },
   {

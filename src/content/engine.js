@@ -18,13 +18,15 @@
  * O(elements), however large the page is.
  */
 
-import { TOKEN_ATTR, WID_ATTR, Mark, STAMP_LIMIT } from '../shared/types.js';
+import { TOKEN_ATTR, WID_ATTR, Mark, RoleMark, ROLES, STAMP_LIMIT } from '../shared/types.js';
 import {
   parseColor, toCss, normaliseColor, luminance, contrastRatio, readableOn,
   ensureReadable, inkFor, flatten,
 } from '../shared/color.js';
+import { backdropCss } from '../shared/theme-format.js';
 import { Role, saturationOf, chromaOf } from './tokens.js';
 import { walkTree, collectShadowRoots, SKIP } from './dom.js';
+import { roleOf } from './roles.js';
 import { SheetRegistry } from './sheets.js';
 
 /** A colour this saturated is chromatic rather than neutral. */
@@ -59,6 +61,12 @@ export class ThemeEngine {
   #active = null;
   #index = null;
   #mapping = null;
+  /** Roles the active theme actually styles, so the walk looks for nothing else. */
+  #roles = new Set();
+  /** `[target, selector]` pairs the theme uses to find its targets, beyond tag and ARIA. */
+  #detect = [];
+  /** What each target's own rule paints it, for the readability guarantee. See `ruleFills`. */
+  #fills = {};
   /** Marks that have appeared so far, and therefore need a rule. */
   #used = new Set();
   /** Whether unreadable text gets forced to black or white. A user setting. */
@@ -94,6 +102,9 @@ export class ThemeEngine {
     this.#sheets.update('');
     this.#active = theme;
     this.#mapping = buildMapping(tokens, theme);
+    this.#roles = wantedRoles(theme);
+    this.#detect = Object.entries(theme.detect ?? {});
+    this.#fills = ruleFills(theme);
     this.#used = new Set();
     this.#index = {
       bg: indexOf(this.#mapping.backgrounds), tx: indexOf(this.#mapping.texts), bd: indexOf(this.#mapping.borders),
@@ -154,11 +165,14 @@ export class ThemeEngine {
     this.#unstamp();
     this.#active = null;
     this.#mapping = null;
+    this.#roles = new Set();
+    this.#detect = [];
+    this.#fills = {};
     this.#used = new Set();
   }
 
   #writeCss() {
-    this.#sheets.update(buildCss(this.#active, this.#mapping, this.#used, this.#index));
+    this.#sheets.update(buildCss(this.#active, this.#mapping, this.#used, this.#index, this.#fills));
   }
 
   #syncRoots(limit) {
@@ -200,6 +214,9 @@ export class ThemeEngine {
     const mapping = this.#mapping;
     const index = this.#index;
     const used = this.#used;
+    const wanted = this.#roles;
+    const detect = this.#detect;
+    const fills = this.#fills;
     const forceReadable = this.#forceReadable;
     // Index -> page token, precomputed: the surface test needs it on every element.
     const bgTokens = [...index.bg.keys()];
@@ -240,7 +257,7 @@ export class ThemeEngine {
           for (const mark of marks) used.add(mark);
           return {
             onAccent: marks.includes(Mark.ON_ACCENT),
-            bg: paintedFromMarks(marks, bgTokens, mapping, parent.bg),
+            bg: paintedFromMarks(marks, bgTokens, mapping, parent.bg, fills),
           };
         }
       }
@@ -253,6 +270,26 @@ export class ThemeEngine {
       }
 
       const marks = [];
+
+      // What the document says this element is, when the theme has asked about it. Read
+      // before anything is measured, because it costs a tag comparison and settles the
+      // treatment for chrome that no amount of looking at colour would identify.
+      let role = roleOf(element, wanted);
+      // Then what the theme says it is, for a theme that ships its own way of finding
+      // things — `card: [".tile", ".product"]`. Tag and ARIA are asked first because they
+      // are facts about the document; a selector list is the theme's guess, and it is only
+      // consulted where the document has not already answered.
+      let foundSurface = false;
+      for (const [target, selector] of detect) {
+        if (target === 'surface' ? foundSurface : role) continue;
+        let hit = false;
+        try { hit = element.matches(selector); } catch { /* a selector this engine cannot test */ }
+        if (!hit) continue;
+        if (target === 'surface') foundSurface = true;
+        else role = target;
+      }
+      if (role) marks.push(RoleMark[role]);
+
       const bg = normaliseColor(style.backgroundColor);
       const bgParsed = parseColor(style.backgroundColor);
       const bgId = resolve(index.bg, mapping.reverse.backgrounds, bg);
@@ -268,12 +305,6 @@ export class ThemeEngine {
         : onAccentAbove;
       if (onAccent) marks.push(Mark.ON_ACCENT);
 
-      // What this element will *actually* be painted with once the theme is on: the
-      // theme's value where the background was remapped, the site's own where it was not,
-      // composited onto whatever is behind it where it is see-through. Measuring text
-      // against the theme's canvas instead of this is what lets grey-on-grey through.
-      const paintedBg = paintBackground(bgId, original, bgParsed, mapping, parent.bg);
-
       // Only a box that paints its own opaque, non-canvas background is a card. Shadows,
       // blur and forced borders apply to those and nothing else — putting a drop shadow on
       // every stamped element is how a theme turns a page into soup.
@@ -281,15 +312,32 @@ export class ThemeEngine {
       const cornerValue = style.borderTopLeftRadius || style.borderRadius || '0';
       const rounded = String(cornerValue).includes('%');
       const corner = rounded ? Infinity : Math.round(Number.parseFloat(cornerValue) || 0);
-      if (opaque && bgId != null && original !== mapping.canvas) {
+      let isSurface = foundSurface;
+      if (!isSurface && opaque && bgId != null && original !== mapping.canvas) {
         const rect = element.getBoundingClientRect();
         // A pill or a circle is a chip, a tag or an avatar. Handing it a card's corner
         // radius is how an avatar comes out as a rounded square.
         const isPill = corner * 2 >= Math.min(rect.width, rect.height);
-        if (!isPill && rect.width >= SURFACE_MIN.width && rect.height >= SURFACE_MIN.height) {
-          marks.push(Mark.SURFACE);
-        }
+        isSurface = !isPill && rect.width >= SURFACE_MIN.width && rect.height >= SURFACE_MIN.height;
       }
+      if (isSurface) marks.push(Mark.SURFACE);
+
+      // What this element will *actually* be painted with once the theme is on: the
+      // theme's value where the background was remapped, the site's own where it was not,
+      // composited onto whatever is behind it where it is see-through. Measuring text
+      // against the theme's canvas instead of this is what lets grey-on-grey through.
+      //
+      // A target the theme's own rules paint is painted with what the rule says, and that
+      // answer outranks every one of the above: the rule is written after the token pass
+      // and wins on the page, so it has to win here too, or the guard measures text against
+      // a fill that is not there. An element painted by a rule is no longer "on the accent"
+      // either, whatever its own background was mapped to.
+      const fill = (role && fills[role]) || (isSurface && fills.surface) || null;
+      const paintedBg = fill?.bg
+        ? paintFill(fill.bg, parent.bg)
+        : paintBackground(bgId, original, bgParsed, mapping, parent.bg);
+      const onAccentHere = fill?.bg ? false : onAccent;
+      if (fill?.bg && marks.includes(Mark.ON_ACCENT)) marks.splice(marks.indexOf(Mark.ON_ACCENT), 1);
 
       const textValue = normaliseColor(style.color);
       const textId = resolve(index.tx, mapping.reverse.texts, textValue);
@@ -323,9 +371,15 @@ export class ThemeEngine {
       // down by inheritance, and whichever descendant actually renders the words gets
       // measured on its own terms — against the background painted at *that* depth.
       if (forceReadable && paintedBg && hasOwnText(element)) {
-        const ink = onAccent
+        // The ink is whatever will actually be on the page: a rule's colour where the
+        // theme wrote one for this kind of thing, the token pass's where it did not.
+        const ruleInk = fill?.color
+          ?? (tag === 'A' && !onAccentHere ? fills.link?.color : null)
+          ?? (/^H[1-6]$/.test(tag) ? fills.heading?.color : null)
+          ?? null;
+        const ink = ruleInk ?? (onAccentHere
           ? mapping.onAccent
-          : (textId != null ? mapping.texts.get(txTokens[textId]) : textValue);
+          : (textId != null ? mapping.texts.get(txTokens[textId]) : textValue));
         const inkParsed = ink ? parseColor(ink) : null;
         if (inkParsed) {
           // Translucent text is one of the ways text goes unreadable, so it is composited
@@ -349,7 +403,7 @@ export class ThemeEngine {
         this.#stamped.delete(element);
       }
 
-      return { onAccent, bg: paintedBg };
+      return { onAccent: onAccentHere, bg: paintedBg };
     }, { limit, context: base });
   }
 
@@ -373,7 +427,7 @@ export class ThemeEngine {
       if (!marks) continue;
       const list = marks.split(' ');
       if (onAccent === null) onAccent = list.includes(Mark.ON_ACCENT);
-      if (bg === null) bg = paintedFromMarks(list, bgTokens, this.#mapping, null);
+      if (bg === null) bg = paintedFromMarks(list, bgTokens, this.#mapping, null, this.#fills);
       if (onAccent !== null && bg !== null) break;
     }
     return { onAccent: onAccent === true, bg: bg ?? this.#rootContext().bg };
@@ -414,14 +468,66 @@ function paintBackground(bgId, original, bgParsed, mapping, behind) {
   return flatten(painted, behind) ?? behind;
 }
 
+/** A rule's own fill, composited onto what is behind it where it is see-through. */
+function paintFill(fill, behind) {
+  if (fill.a <= 0.001) return behind;
+  if (fill.a >= 0.999) return fill;
+  return flatten(fill, behind) ?? behind;
+}
+
 /** The same question, answered from stamps an earlier pass already wrote. */
-function paintedFromMarks(marks, bgTokens, mapping, behind) {
+function paintedFromMarks(marks, bgTokens, mapping, behind, fills = null) {
+  // A rule's fill first, for the same reason it comes first on a fresh walk.
+  if (fills) {
+    for (const mark of marks) {
+      const target = mark === Mark.SURFACE ? 'surface' : MARK_ROLE[mark];
+      const fill = target ? fills[target] : null;
+      if (fill?.bg) return paintFill(fill.bg, behind);
+    }
+  }
   const mark = marks.find((m) => /^bg\d+$/.test(m));
   if (!mark) return behind;
   const token = bgTokens[Number.parseInt(mark.slice(2), 10)];
   const painted = token == null ? null : parseColor(mapping.backgrounds.get(token));
   if (!painted) return behind;
   return painted.a >= 0.999 ? painted : (flatten(painted, behind) ?? behind);
+}
+
+/** Mark -> role, the other way round from `RoleMark`. */
+const MARK_ROLE = Object.fromEntries(Object.entries(RoleMark).map(([role, mark]) => [mark, role]));
+
+/**
+ * The roles a theme styles, by material or by rule or by a selector list of its own.
+ *
+ * Anything outside this set is never looked for, so a theme with no roles pays nothing.
+ */
+function wantedRoles(theme) {
+  const out = new Set(Object.keys(theme.roles ?? {}));
+  for (const rule of theme.rules ?? []) if (rule.target && ROLES.includes(rule.target)) out.add(rule.target);
+  for (const target of Object.keys(theme.detect ?? {})) if (ROLES.includes(target)) out.add(target);
+  return out;
+}
+
+/**
+ * What each target's base rule paints it: `{ bg, color }`, parsed, or nothing.
+ *
+ * The readability guarantee measures text against what is actually painted, and a rule
+ * that fills every button black has changed what is painted. Read once when the theme is
+ * applied, so the walk can ask in constant time.
+ */
+function ruleFills(theme) {
+  const out = {};
+  for (const rule of theme.rules ?? []) {
+    if (!rule.target || rule.state || rule.media) continue;
+    const entry = out[rule.target] ?? (out[rule.target] = { bg: null, color: null, painted: false });
+    const bg = rule.properties['background-color'];
+    if (bg) { entry.bg = parseColor(bg); entry.painted = true; }
+    // A gradient fill paints the box too, but with no one colour to measure against; the
+    // guard falls back to what is behind, and the fill is still held to be the rule's.
+    if (rule.properties['background-image'] && rule.properties['background-image'] !== 'none') entry.painted = true;
+    if (rule.properties.color) entry.color = parseColor(rule.properties.color);
+  }
+  return out;
 }
 
 /**
@@ -655,7 +761,7 @@ const HEADINGS = 'h1, h2, h3, h4, h5, h6';
 const FONT_EXCLUDE = ':not(code):not(pre):not(kbd):not(samp)' +
   ':not([class*="icon"]):not([class*="Icon"]):not([class*="fa-"]):not([class*="material-"])';
 
-export function buildCss(theme, mapping, used, index) {
+export function buildCss(theme, mapping, used, index, fills = ruleFills(theme)) {
   const p = theme.palette;
   const attr = (mark) => `[${TOKEN_ATTR}~="${mark}"]`;
   const rules = [];
@@ -687,6 +793,24 @@ export function buildCss(theme, mapping, used, index) {
     rules.push(`${attr(Mark.SURFACE)} { ${surface.join(' ')} }`);
   }
 
+  // ── Roles and states ─────────────────────────────────────────────────
+  // After the generic surface rule and before the guarantees below it. Every selector
+  // here is one attribute at the same specificity as every other, so this block is
+  // reading as "a modal may differ from an ordinary card" — and the two rules that follow
+  // it are reading as "and neither of them may make the text unreadable".
+  rules.push(...roleCss(theme, mapping, used, fills));
+  rules.push(...stateCss(theme, used));
+
+  // What the theme's file said about each kind of element, in its own words. After the
+  // materials and the composed states, so that where a theme both names a material and
+  // writes a declaration, the declaration — the more specific thing it said — wins.
+  rules.push(...targetRuleCss(theme, used));
+
+  // Selection and scrollbar are the page's own chrome, and belong to whatever theme is
+  // on. Neither needs a stamp: there is one of each per document.
+  rules.push(`::selection { background: ${p.accent} !important; color: ${mapping.onAccent} !important; }`);
+  rules.push(`* { scrollbar-color: ${p.border} transparent; }`);
+
   // Text on an accented fill has to stay readable — a link included, which would
   // otherwise keep its own accent colour and vanish into the fill behind it. This comes
   // after the text rules and matches at equal specificity, so it wins on order.
@@ -712,7 +836,105 @@ export function buildCss(theme, mapping, used, index) {
   if (theme.effects.glow) heading.push(`text-shadow: 0 0 14px ${withAlpha(p.accent, 0.45)} !important;`);
   if (heading.length) rules.push(`${HEADINGS} { ${heading.join(' ')} }`);
 
+  // ── Motion ───────────────────────────────────────────────────────────
+  // One transition for everything the theme touches, so a hover it wrote arrives at the
+  // speed it asked for. Last of the composed rules, and only where a stamp exists.
+  if (theme.effects.transition) {
+    const moving = [used.has(Mark.SURFACE) ? attr(Mark.SURFACE) : null,
+      ...Object.values(RoleMark).filter((m) => used.has(m)).map(attr),
+      `a:not(${attr(Mark.ON_ACCENT)})`].filter(Boolean);
+    rules.push(`${moving.join(', ')} { transition: ${theme.effects.transition} !important; }`);
+  }
+
+  // ── The theme's own selectors ────────────────────────────────────────
+  // Last of all, after the guarantees, exactly as the site stylesheet someone types is:
+  // a selector the theme named is the theme asking for that element outright, and the
+  // answer to "but the guard said" is the same one the editor gives — you asked for it.
+  rules.push(...selectorRuleCss(theme));
+
   return `/* Webin — ${theme.name} */\n${rules.join('\n')}`;
+}
+
+/** A rule's declarations, every one marked `!important`, as the token rules are. */
+function declarations(properties) {
+  return Object.entries(properties).map(([property, value]) => `${property}: ${value} !important;`).join(' ');
+}
+
+/**
+ * How a state is written onto a selector.
+ *
+ * `current` is the item you are on — a nav link with `aria-current`, a selected row — and
+ * is matched by what the document says plus the two or three class names the whole web
+ * agrees on for it. `focus` is `:focus-visible`, so a button clicked with the mouse does
+ * not light up and a field tabbed into does.
+ */
+const STATE_SUFFIX = {
+  hover: ':hover',
+  active: ':active',
+  focus: ':focus-visible',
+  placeholder: '::placeholder',
+};
+const CURRENT = ['[aria-current]', '[aria-selected="true"]', '[aria-pressed="true"]',
+  '.active', '.is-active', '.selected', '.current'];
+
+/**
+ * The selector for a target in a state, or null when nothing on the page carries it.
+ *
+ * Roles and surfaces are their marks; the page's furniture is its own tag. A link rule is
+ * held back from links on an accent fill, which have to keep the accent's ink or vanish.
+ */
+function targetSelector(target, state, used) {
+  const attr = (mark) => `[${TOKEN_ATTR}~="${mark}"]`;
+  let bases;
+  if (target === 'surface') {
+    if (!used.has(Mark.SURFACE)) return null;
+    bases = [attr(Mark.SURFACE)];
+  } else if (RoleMark[target]) {
+    if (!used.has(RoleMark[target])) return null;
+    bases = [attr(RoleMark[target])];
+  } else if (target === 'body') {
+    bases = ['body'];
+  } else if (target === 'heading') {
+    bases = HEADINGS.split(', ');
+  } else if (target === 'link') {
+    bases = [`a:not(${attr(Mark.ON_ACCENT)})`];
+  } else {
+    return null;
+  }
+
+  if (!state) return bases.join(', ');
+  if (state === 'current') {
+    // A nav is current *inside* itself; a link or a button is current itself.
+    const inside = ['nav', 'sidebar', 'table', 'header', 'footer', 'popover', 'modal', 'surface'].includes(target);
+    return bases.flatMap((base) => CURRENT.map((c) => (inside ? `${base} ${c}` : `${base}${c}`))).join(', ');
+  }
+  const suffix = STATE_SUFFIX[state];
+  return suffix ? bases.map((base) => `${base}${suffix}`).join(', ') : null;
+}
+
+/** The rules written against targets, base state first so a hover can override it. */
+function targetRuleCss(theme, used) {
+  const out = [];
+  const list = (theme.rules ?? []).filter((rule) => rule.target);
+  const ordered = [...list.filter((r) => !r.state), ...list.filter((r) => r.state)];
+  for (const rule of ordered) {
+    const selector = targetSelector(rule.target, rule.state, used);
+    if (!selector) continue;
+    const inner = `${selector} { ${declarations(rule.properties)} }`;
+    out.push(rule.media ? `${rule.media} { ${inner} }` : inner);
+  }
+  return out;
+}
+
+/** The rules written against the theme's own selectors, as written. */
+function selectorRuleCss(theme) {
+  const out = [];
+  for (const rule of theme.rules ?? []) {
+    if (!rule.selector) continue;
+    const inner = `${rule.selector} { ${declarations(rule.properties)} }`;
+    out.push(rule.media ? `${rule.media} { ${inner} }` : inner);
+  }
+  return out;
 }
 
 /**
@@ -730,19 +952,28 @@ export function rootCss(theme, mapping) {
     lines.push(`:root { ${declarations} }`);
   }
 
-  const canvas = theme.effects.backdrop
-    ? `background: ${theme.effects.backdrop} !important; background-attachment: fixed !important;`
+  // Built here from the theme's own data rather than taken as a string: see `backdropCss`.
+  const painted = backdropCss(theme.effects.backdrop);
+  const canvas = painted
+    ? `background: ${painted} !important; background-attachment: fixed !important;`
     : `background-color: ${p.background} !important;`;
   lines.push(`html { ${canvas} color-scheme: ${theme.dark ? 'dark' : 'light'} !important; }`);
 
   const body = [];
-  body.push(theme.effects.backdrop
+  body.push(painted
     ? 'background-color: transparent !important;'
     : `background-color: ${p.background} !important;`);
   // Guarded, exactly as the stamped text rules are. Body colour is inherited by every
   // element that carries no text stamp of its own, so an unchecked value here is a hole
   // straight through the guarantee.
-  body.push(`color: ${ensureReadable(p.text, [p.background, p.surface])} !important;`);
+  //
+  // The surface is judged as it will be *painted*, not as it was written down — the same
+  // rule the per-element pass follows. A glass theme's panel is a sheet of near-invisible
+  // white, and scoring that as solid white asks the guard to find one ink that reads on a
+  // dark page and on white at the same time. There isn't one, so it picked black, and a
+  // dark theme came out with black body text on a dark ground. Composited onto the canvas
+  // it is standing on, that panel is dark, and white wins as it should.
+  body.push(`color: ${ensureReadable(p.text, [p.background, paintedSurface(theme)])} !important;`);
   if (theme.fontFamily) body.push(`font-family: ${theme.fontFamily} !important;`);
   if (theme.effects.noise) body.push(`background-image: ${NOISE} !important;`);
   lines.push(`body { ${body.join(' ')} }`);
@@ -750,13 +981,51 @@ export function rootCss(theme, mapping) {
   return lines.join('\n');
 }
 
+/**
+ * The theme's surface colour as it ends up on the page: at the translucency the theme
+ * asked for, composited onto the canvas behind it when it is see-through.
+ *
+ * `buildMapping` computes the same fill for the surface token; this is that value taken
+ * the one step further that a contrast check needs, since contrast has nowhere to put an
+ * alpha channel.
+ */
+function paintedSurface(theme) {
+  const p = theme.palette;
+  const fill = withAlpha(p.surface, theme.effects.surfaceAlpha);
+  const parsed = parseColor(fill);
+  if (!parsed || parsed.a >= 0.999) return fill;
+  const behind = parseColor(p.background);
+  const composited = behind ? flatten(parsed, behind) : null;
+  return composited ? toCss(composited) : fill;
+}
+
+/**
+ * A theme's own surface treatment, or a named material's difference from it.
+ *
+ * A material names only what it changes, so everything it leaves out is inherited from the
+ * theme — which is what makes `{ blur: 40 }` a legible way to say "a modal, but blurrier"
+ * rather than a second theme that has to repeat itself.
+ */
+function surfaceSpec(theme, name = null) {
+  const base = {
+    shadow: theme.shadow,
+    borderWidth: theme.effects.borderWidth,
+    blur: theme.effects.blur,
+    surfaceAlpha: theme.effects.surfaceAlpha,
+    gradient: theme.effects.gradient,
+    radius: theme.radius,
+  };
+  const material = name ? theme.materials?.[name] : null;
+  return material ? { ...base, ...material } : base;
+}
+
 /** Declarations that give a card its treatment, per the theme's shadow kind. */
-function surfaceCss(theme, mapping) {
+function surfaceCss(theme, mapping, spec = surfaceSpec(theme)) {
   const p = theme.palette;
   const out = [];
-  const border = theme.effects.borderWidth;
+  const border = spec.borderWidth;
 
-  switch (theme.shadow) {
+  switch (spec.shadow) {
     case 'hard':
       out.push(`box-shadow: 4px 4px 0 0 ${p.border} !important;`);
       break;
@@ -776,20 +1045,120 @@ function surfaceCss(theme, mapping) {
       out.push(`box-shadow: 0 0 0 1px ${withAlpha(p.accent, 0.35)}, 0 0 24px ${withAlpha(p.accent, 0.18)} !important;`);
       break;
     default:
-      if (SHADOWS[theme.shadow] && theme.shadow !== 'none') out.push(`box-shadow: ${SHADOWS[theme.shadow]} !important;`);
+      if (SHADOWS[spec.shadow] && spec.shadow !== 'none') out.push(`box-shadow: ${SHADOWS[spec.shadow]} !important;`);
       break;
   }
 
-  if (theme.effects.blur) {
-    out.push(`backdrop-filter: blur(${theme.effects.blur}px) !important;`);
-    out.push(`-webkit-backdrop-filter: blur(${theme.effects.blur}px) !important;`);
+  if (spec.blur) {
+    out.push(`backdrop-filter: blur(${spec.blur}px) !important;`);
+    out.push(`-webkit-backdrop-filter: blur(${spec.blur}px) !important;`);
   }
-  if (theme.effects.gradient) {
-    out.push('background-image: linear-gradient(180deg, rgba(255,255,255,0.30), rgba(0,0,0,0.06)) !important;');
+  if (spec.gradient) {
+    out.push(`background-image: ${SHEEN} !important;`);
   }
-  if (border != null && theme.shadow !== 'glass' && theme.shadow !== 'neu') {
+  if (border != null && spec.shadow !== 'glass' && spec.shadow !== 'neu') {
     out.push(`border: ${border}px solid ${p.border} !important;`);
   }
-  if (theme.radius != null) out.push(`border-radius: ${theme.radius}px !important;`);
+  if (spec.radius != null) out.push(`border-radius: ${spec.radius}px !important;`);
   return out;
+}
+
+/** The sheen laid over a surface when a theme asks for `gradient`. */
+const SHEEN = 'linear-gradient(180deg, rgba(255,255,255,0.30), rgba(0,0,0,0.06))';
+
+/**
+ * The rules that give each structural role its material.
+ *
+ * Two rules per role, and the split matters. The treatment — blur, edge, corner, shadow —
+ * applies to every element in the role. The *fill* is held back from anything the token
+ * pass already painted, because that pass is what turns a site's primary button into the
+ * theme's accent, and a material that painted over it would throw the accent away and
+ * hand back a grey slab.
+ */
+function roleCss(theme, mapping, used, fills = {}) {
+  const rules = [];
+  const attr = (mark) => `[${TOKEN_ATTR}~="${mark}"]`;
+
+  for (const [role, name] of Object.entries(theme.roles ?? {})) {
+    const mark = RoleMark[role];
+    if (!mark || !used.has(mark)) continue;
+
+    const spec = surfaceSpec(theme, name);
+    const declarations = surfaceCss(theme, mapping, spec);
+    if (declarations.length) rules.push(`${attr(mark)} { ${declarations.join(' ')} }`);
+
+    // A role the theme's own rules paint has its fill already; the material's would only
+    // outrank it, since this selector is the more specific of the two.
+    if (fills[role]?.painted) continue;
+    const fill = withAlpha(theme.palette.surface, spec.surfaceAlpha);
+    // `*=` reads the whole attribute, so this is "carries no background mark at all".
+    rules.push(`${attr(mark)}:not([${TOKEN_ATTR}*="bg"]) { background-color: ${fill} !important; }`);
+  }
+  return rules;
+}
+
+/**
+ * Hover, press and focus.
+ *
+ * Composed from the theme's own palette out of clamped amounts, never from a declaration
+ * a theme wrote down. The lift is an overlay rather than a recomputed colour: an element's
+ * real fill depends on what the token pass gave it and on what is showing through it, and
+ * a translucent wash over the top comes out right on all of them without having to know
+ * which. Where a theme also asks for a sheen, both layers are stacked so hovering does not
+ * take the sheen away.
+ *
+ * Movement is kept to buttons and cards. A nav bar or a modal that grows under the pointer
+ * takes its fixed-position descendants with it, and a page whose chrome moves when the
+ * mouse crosses it is a page that feels broken.
+ */
+function stateCss(theme, used) {
+  const p = theme.palette;
+  const s = theme.states ?? {};
+  const rules = [];
+  const attr = (mark) => `[${TOKEN_ATTR}~="${mark}"]`;
+
+  const present = (role) => used.has(RoleMark[role]) && Boolean(theme.roles?.[role]);
+  const hoverable = [Mark.SURFACE, 'button', 'field', 'nav', 'modal', 'popover']
+    .map((key) => (key === Mark.SURFACE ? (used.has(Mark.SURFACE) ? Mark.SURFACE : null)
+      : (present(key) ? RoleMark[key] : null)))
+    .filter(Boolean);
+  const movable = [
+    used.has(Mark.SURFACE) ? Mark.SURFACE : null,
+    present('button') ? RoleMark.button : null,
+  ].filter(Boolean);
+
+  if (hoverable.length && (s.lift != null || s.border != null)) {
+    const declarations = [];
+    if (s.lift != null) {
+      // White on a dark theme, black on a light one: a lift has to read as "closer to the
+      // light" either way, and a white wash over a pale card does nothing at all.
+      const ink = theme.dark ? '255, 255, 255' : '0, 0, 0';
+      const wash = `rgba(${ink}, ${s.lift})`;
+      const overlay = `linear-gradient(${wash}, ${wash})`;
+      declarations.push(`background-image: ${theme.effects.gradient ? `${overlay}, ${SHEEN}` : overlay} !important;`);
+    }
+    if (s.border != null) {
+      declarations.push(`border-color: ${mix(p.border, p.text, s.border)} !important;`);
+    }
+    rules.push(`${hoverable.map((m) => `${attr(m)}:hover`).join(', ')} { ${declarations.join(' ')} }`);
+  }
+
+  if (movable.length && s.scale != null) {
+    rules.push(`${movable.map((m) => `${attr(m)}:hover`).join(', ')} `
+      + `{ transform: scale(${s.scale}) !important; }`);
+  }
+  if (movable.length && s.press != null) {
+    rules.push(`${movable.map((m) => `${attr(m)}:active`).join(', ')} `
+      + `{ transform: scale(${s.press}) !important; }`);
+  }
+
+  // The ring goes on `outline`, not on a shadow: a focus ring drawn as a box-shadow has to
+  // replace whatever shadow the surface already had, and an outline sits beside it.
+  const focusable = ['button', 'field'].filter(present).map((role) => RoleMark[role]);
+  if (focusable.length && s.ring) {
+    rules.push(`${focusable.map((m) => `${attr(m)}:focus-visible`).join(', ')} `
+      + `{ outline: ${s.ring}px solid ${withAlpha(p.accent, 0.55)} !important; outline-offset: 2px !important; }`);
+  }
+
+  return rules;
 }

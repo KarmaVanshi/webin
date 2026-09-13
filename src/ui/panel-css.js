@@ -473,6 +473,9 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   box-shadow: var(--pop-shadow);
   animation: wb-in var(--dur) var(--ease);
 }
+/* A toast is read, never pressed — so it must never be what a press lands on. Without
+   this it sat over the button that had just been pressed and swallowed the next press. */
+.wb-toast { pointer-events: none; }
 .wb-toast--error { background: var(--danger); color: #FFFFFF; }
 .wb-toast svg { flex: none; margin-top: 1px; }
 
@@ -500,6 +503,79 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 /* Editing needs the room; browsing themes does not. */
 .wb-panel[data-view="edit"] { width: 360px; }
 
+/* ── Editor: the tool switch ────────────────────────────────────────── */
+/* Chrome, not content: the same raised strip as the bar at the foot of the column, so the
+   two toolbars bracket the controls between them and neither reads as part of the page's
+   own properties. Right-aligned, because it belongs to the column rather than to any one
+   row in it. */
+.webin-tools {
+  display: flex; justify-content: flex-end;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--raised);
+}
+/* The pair is drawn as one object with a divider inside it — two loose buttons would say
+   "two actions" where this has to say "one of these two". */
+.webin-tools-set {
+  display: flex; gap: 2px; padding: 2px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+/* ── Editor: written CSS ────────────────────────────────────────────────
+   Two panes, because the two scopes are two different things: what this element says, and
+   what the site says. Stacked rather than tabbed so both are visible at once — the reason
+   to open the site sheet is usually something you just saw in the element above it. */
+.webin-code { display: flex; flex-direction: column; }
+.webin-code-pane {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+}
+.webin-code-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
+.webin-code-hint, .webin-code-head .webin-hint {
+  font-size: var(--text-micro); color: var(--fg-dim);
+}
+/* Monospace and a tab that indents rather than leaves the field: this is a code editor,
+   however small, and the muscle memory that comes with one should work. */
+.webin-code-area {
+  width: 100%; box-sizing: border-box; min-height: 92px; resize: vertical;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro); line-height: 1.6;
+  color: var(--fg); background: var(--surface);
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  tab-size: 2;
+}
+.webin-code-area--tall { min-height: 150px; }
+.webin-code-area:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent;
+}
+.webin-code-area::placeholder { color: var(--fg-dim); opacity: 0.7; }
+.webin-code-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3); }
+.webin-code-status { color: var(--fg); }
+/* The site's rules, under the box you write yours in, so what you are overriding is in
+   view while you type. Collapsible, since it can be long and is a reference, not a control. */
+.webin-code-ref { margin-top: var(--space-2); }
+.webin-code-ref-head {
+  cursor: pointer; font-size: var(--text-micro); font-weight: 600; color: var(--fg-dim);
+  text-transform: uppercase; letter-spacing: 0.05em; padding: var(--space-2) 0;
+}
+.webin-code-ref-head:hover { color: var(--fg); }
+.webin-code-ref-head:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.webin-code-ref .webin-styles { margin-top: var(--space-2); }
+.webin-code-empty { margin: 0; font-size: var(--text-micro); color: var(--fg-dim); }
+/* What was refused, under the box it was typed in. Never a toast: a message about the
+   third line of what you wrote has to stay put next to the third line of what you wrote. */
+.webin-code-notes {
+  margin: 0; padding: var(--space-2) var(--space-3); list-style: none;
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: var(--text-micro); line-height: 1.5;
+  color: var(--danger); background: var(--danger-dim);
+  border-radius: var(--radius-sm);
+}
+.webin-code-notes li { font-family: var(--font-mono); }
+
 /* ── Editor: the selected element ───────────────────────────────────── */
 .webin-selection {
   display: flex; flex-direction: column; gap: var(--space-2);
@@ -514,6 +590,39 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .webin-selection-size { font-size: var(--text-micro); color: var(--fg-dim); flex: none; }
+
+/* ── Editor: the site's own CSS ──────────────────────────────────────────
+   The browser's Styles pane, in a 360px column: the element as the page names it, then
+   every rule that matches it, most powerful first. Monospace because it is code, and
+   wrapped anywhere because a selector or a value can be any length a site likes and a
+   sideways scroll in a column this narrow is a list nobody reads. */
+.webin-styles { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.webin-styles-target {
+  display: block; padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 600;
+  color: var(--fg); background: var(--muted); border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+.webin-rule {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-family: var(--font-mono); font-size: var(--text-micro); line-height: 1.55;
+}
+.webin-rule-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); min-width: 0; }
+.webin-rule-sel { flex: 1; min-width: 0; color: var(--fg); font-weight: 600; overflow-wrap: anywhere; }
+.webin-rule-src { flex: none; max-width: 40%; color: var(--fg-dim); font-family: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.webin-rule-media { color: var(--fg-dim); overflow-wrap: anywhere; }
+.webin-rule-body { display: flex; flex-direction: column; padding-left: var(--space-3); }
+.webin-decl { min-width: 0; overflow-wrap: anywhere; color: var(--fg); }
+.webin-decl-prop { color: var(--accent); }
+.webin-decl-sep, .webin-decl-imp { color: var(--fg-dim); }
+/* Overridden: struck through and dimmed, and named in the title — three ways, as the
+   pressed tool is marked three ways, so it never rests on colour alone. */
+.webin-decl.is-overridden { text-decoration: line-through; color: var(--fg-dim); }
+.webin-decl.is-overridden .webin-decl-prop { color: var(--fg-dim); }
+.webin-styles-empty { margin: 0; font-size: var(--text-micro); color: var(--fg-dim); }
 
 /* ── Editor: sections ───────────────────────────────────────────────── */
 .webin-section { border-bottom: 1px solid var(--hairline); }
@@ -585,7 +694,22 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .webin-range { flex: 1; accent-color: var(--accent); }
 .webin-output { flex: none; min-width: 42px; text-align: right; font-size: var(--text-micro); color: var(--fg-dim); }
 
-.webin-segmented { display: flex; gap: 1px; padding: 1px; background: var(--muted); border-radius: var(--radius-sm); }
+.webin-segmented { display: flex; flex: 1; min-width: 0; gap: 1px; padding: 1px; background: var(--muted); border-radius: var(--radius-sm); }
+/* The way back to the site's own value. It appears only on a value you have changed, so it
+   doubles as the marker for what you have changed — quiet until wanted, and never taking
+   space from the control it belongs to. */
+.webin-revert { flex: none; min-width: 22px; min-height: 22px; padding: 0; opacity: 0.6; }
+.webin-revert:hover, .webin-revert:focus-visible { opacity: 1; color: var(--accent); }
+/* Kept in the layout when there is nothing to revert, rather than removed. A control that
+   appears out of nowhere takes 30px off the field beside it, so every value narrowed the
+   moment you changed it — which is the same flinch this panel spent a while getting rid
+   of. The space is always there; only the button comes and goes. */
+.webin-revert[disabled] { visibility: hidden; pointer-events: none; }
+/* Sits between the value and its revert, so the row reads left to right as: what the
+   colour is, another way to fill it, and the way back. Always present — unlike revert it
+   is never unavailable, since there is always an image you could choose. */
+.webin-add-image { flex: none; min-width: 22px; min-height: 22px; padding: 0; opacity: 0.6; }
+.webin-add-image:hover, .webin-add-image:focus-visible { opacity: 1; color: var(--accent); }
 .webin-seg {
   flex: 1; min-height: 24px; padding: 0 var(--space-2);
   border-radius: 3px; font-size: var(--text-micro); color: var(--fg-dim);
@@ -596,6 +720,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .webin-seg:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 
 .webin-box-head { display: flex; align-items: center; justify-content: space-between; }
+.webin-box-actions { display: flex; align-items: center; gap: var(--space-1); }
 .webin-box-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2); }
 .webin-box-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .webin-box-tag { font-size: 9px; color: var(--fg-dim); letter-spacing: 0.04em; }
@@ -630,6 +755,11 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .webin-icon-btn.is-on { background: var(--muted); color: var(--accent); }
 .webin-icon-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .webin-icon-btn--danger:hover { color: var(--danger); }
+/* A step with nowhere to go — the top of the page, or an element with no children worth
+   offering. Dimmed and inert rather than removed, so the pair does not shuffle sideways
+   under the pointer as the selection moves. */
+.webin-icon-btn:disabled { opacity: .4; cursor: default; }
+.webin-icon-btn:disabled:hover { background: none; color: var(--fg-dim); }
 
 /* ── Editor: contrast note ──────────────────────────────────────────── */
 /* Colour is never the only signal here: there is an icon and the ratio in figures. */

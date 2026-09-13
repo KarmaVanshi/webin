@@ -167,6 +167,25 @@ test('glass themes paint a backdrop and let the canvas through', () => {
   assert.match(css, /html \{ background: radial-gradient/);
 });
 
+test('a glass theme keeps its light body text over a dark ground', () => {
+  // A theme whose surface is written down as near-invisible white, which is what an
+  // honest liquid-glass file looks like. Judged as written, that panel reads as solid
+  // white, no ink reads on both it and the dark canvas, and the guard used to settle on
+  // black — a dark theme rendering black text on a dark page. Judged as painted, the
+  // panel is dark and white text stands.
+  const theme = normaliseTheme({
+    name: 'Liquid', dark: true,
+    palette: {
+      background: '#0A0F1A', surface: 'rgba(255, 255, 255, 0.075)',
+      text: 'rgba(255, 255, 255, 0.96)', accent: '#0A84FF',
+    },
+    shadow: 'glass',
+    effects: { blur: 28, surfaceAlpha: 0.075 },
+  });
+  const css = rootCss(theme, { variables: [] });
+  assert.match(css, /body \{[^}]*color: #ffffff/, 'white ink, not black');
+});
+
 test('a font stack is applied by inheritance, and icon fonts are left alone', () => {
   const css = buildCss(presetById('terminal'), buildMapping(pageTokens(), presetById('terminal')), new Set(), null);
   assert.match(css, /body \*:not\(code\)/);
@@ -398,4 +417,227 @@ test('a theme from a friend cannot smuggle CSS through the engine', () => {
   const css = buildCss(hostile, buildMapping(pageTokens(), hostile), new Set(), null);
   assert.ok(!css.includes('evil.example'), 'the font stack never reaches the stylesheet');
   assert.ok(!css.includes('url('), 'no url() smuggled in');
+});
+
+// ── Roles and materials ─────────────────────────────────────────────────────
+
+const glassy = normaliseTheme({
+  name: 'Roled', dark: true,
+  palette: { background: '#101A34', surface: '#25324F', text: '#F8FAFC', accent: '#38BDF8' },
+  radius: 18, shadow: 'glass',
+  effects: { blur: 16, surfaceAlpha: 0.18 },
+  materials: {
+    soft: { blur: 30, surfaceAlpha: 0.045, radius: 0 },
+    strong: { blur: 40, surfaceAlpha: 0.13, radius: 24 },
+  },
+  roles: { nav: 'soft', modal: 'strong', button: 'soft' },
+  states: { lift: 0.05, border: 0.2, scale: 1.02, press: 0.98, ring: 3 },
+});
+
+function roleDom() {
+  const dom = makeDom(`<html><body style="background-color:#ffffff">
+    <header><nav id="nav"><a href="#">Home</a></nav></header>
+    <main>
+      <article><header id="cardhead">Post</header></article>
+      <dialog id="modal">Are you sure?</dialog>
+      <button id="btn">Go</button>
+      <input id="text" type="text">
+      <input id="tick" type="checkbox">
+      <input id="send" type="submit" value="Send">
+    </main>
+  </body></html>`);
+  stubLayout(dom, { width: 300, height: 120 });
+  return dom;
+}
+
+const marksOf = (dom, id) => (dom.window.document.getElementById(id).getAttribute(TOKEN_ATTR) ?? '').split(' ');
+
+test('roles are read from tags and ARIA, not from class names', () => {
+  const dom = roleDom();
+  new ThemeEngine({ doc: dom.window.document, view: dom.window }).apply(glassy, pageTokens());
+
+  assert.ok(marksOf(dom, 'nav').includes('nv'), 'a <nav> is a nav');
+  assert.ok(marksOf(dom, 'modal').includes('ml'), 'a <dialog> is a modal');
+  assert.ok(marksOf(dom, 'btn').includes('bt'), 'a <button> is a button');
+  assert.ok(marksOf(dom, 'send').includes('bt'), 'so is an <input type=submit>');
+});
+
+test('a role the theme does not style is never looked for', () => {
+  const dom = roleDom();
+  new ThemeEngine({ doc: dom.window.document, view: dom.window }).apply(glassy, pageTokens());
+
+  // `field` is absent from this theme's roles, so no text input carries a field mark
+  // however plainly it is one — the walk asks only about what the theme can use.
+  assert.ok(!marksOf(dom, 'text').includes('fd'));
+  // A tick box is a control the browser draws; a field's padding would deform it.
+  assert.ok(!marksOf(dom, 'tick').includes('fd'));
+});
+
+test('an article header is that article\'s, not the page\'s', () => {
+  const withHeader = normaliseTheme({
+    ...JSON.parse(JSON.stringify(glassy)), roles: { header: 'soft' },
+  });
+  const dom = roleDom();
+  new ThemeEngine({ doc: dom.window.document, view: dom.window }).apply(withHeader, pageTokens());
+
+  assert.ok(!marksOf(dom, 'cardhead').includes('hd'),
+    'a <header> inside an <article> is scoped to it, and is not the site banner');
+});
+
+test('a material is a difference from the theme, not a replacement for it', () => {
+  const dom = roleDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(glassy, pageTokens());
+  const css = engine.css;
+
+  // `soft` names blur, alpha and radius; the glass shadow and edge come from the theme.
+  assert.match(css, /\[data-webin~="nv"\] \{[^}]*backdrop-filter: blur\(30px\)/);
+  assert.match(css, /\[data-webin~="nv"\] \{[^}]*border-radius: 0px/);
+  assert.match(css, /\[data-webin~="nv"\] \{[^}]*box-shadow/, 'inherited from the theme');
+  assert.match(css, /\[data-webin~="ml"\] \{[^}]*backdrop-filter: blur\(40px\)/);
+});
+
+test('a material never paints over a fill the token pass already chose', () => {
+  const dom = roleDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(glassy, pageTokens());
+
+  // The accent button is the case this protects: the token pass turns a site's brand fill
+  // into the theme accent, and a material that painted over it would hand back a slab.
+  assert.match(engine.css, /\[data-webin~="bt"\]:not\(\[data-webin\*="bg"\]\) \{ background-color:/);
+});
+
+test('states are composed from amounts, and movement stays off the chrome', () => {
+  const dom = roleDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(glassy, pageTokens());
+  const css = engine.css;
+
+  assert.match(css, /:hover[^{]*\{[^}]*linear-gradient\(rgba\(255, 255, 255, 0\.05\)/);
+  assert.match(css, /:focus-visible[^{]*\{[^}]*outline: 3px solid/);
+
+  const transform = css.match(/^(.*)\{ transform: scale\(1\.02\).*$/m)?.[1] ?? '';
+  assert.ok(transform.includes('"sf"') || transform.includes('"bt"'), 'cards and buttons move');
+  assert.ok(!transform.includes('"nv"'), 'a nav bar does not, or it takes its fixed children with it');
+  assert.ok(!transform.includes('"ml"'), 'nor does a modal');
+});
+
+test('a theme with no roles emits no role rules at all', () => {
+  const dom = roleDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(presetById('glass'), pageTokens());
+
+  assert.ok(!engine.css.includes('~="nv"'), 'opt-in, so the 18 shipped presets are untouched');
+  assert.ok(!marksOf(dom, 'nav').includes('nv'), 'and nothing is stamped for them either');
+});
+
+// ── Everything else the file said ───────────────────────────────────────────
+// A theme file describes its buttons, cards, inputs, nav, links, scrollbar and selection in
+// CSS-shaped words, and names selectors of its own. All of it renders.
+
+import { readFileSync } from 'node:fs';
+
+const themeFile = (name) => normaliseTheme(JSON.parse(readFileSync(new URL(`../themes/${name}.json`, import.meta.url), 'utf8')));
+
+function fullDom() {
+  const dom = makeDom(`<html><body style="background-color:#ffffff">
+    <nav id="nav"><a id="link" href="#" aria-current="page">Home</a></nav>
+    <main>
+      <h2 id="h">Title</h2>
+      <div id="card" class="product-tile" style="background-color:#f2f2f2">A card</div>
+      <button id="btn">Go</button>
+      <input id="text" type="text" placeholder="Search">
+      <aside id="side">Side</aside>
+    </main>
+  </body></html>`);
+  stubLayout(dom, { width: 300, height: 120 });
+  return dom;
+}
+
+test('brutalist02 renders as written: black borders, block shadows, uppercase buttons', () => {
+  const theme = themeFile('brutalist02');
+  const dom = fullDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(theme, pageTokens());
+  const css = engine.css;
+
+  assert.ok(marksOf(dom, 'btn').includes('bt'), 'a button rule means buttons are stamped');
+  assert.ok(marksOf(dom, 'text').includes('fd'), 'and so are fields');
+  assert.match(css, /\[data-webin~="bt"\] \{[^}]*background-color: #000000 !important/);
+  assert.match(css, /\[data-webin~="bt"\] \{[^}]*text-transform: uppercase !important/);
+  assert.match(css, /\[data-webin~="bt"\] \{[^}]*box-shadow: 5px 5px 0px #FF3B00 !important/);
+  assert.match(css, /\[data-webin~="sf"\] \{[^}]*border-width: 3px !important/);
+  assert.match(css, /\[data-webin~="sf"\] \{[^}]*box-shadow: 10px 10px 0px #000000 !important/, 'the later `cards` block answers over `surfaces`');
+  assert.match(css, /\[data-webin~="nv"\] \{[^}]*border-width: 0px 0px 3px 0px !important/);
+  assert.match(css, /body \{[^}]*font-weight: 700 !important/, 'the body block renders too');
+  assert.match(css, /::selection \{ background-color: #000000 !important; color: #ffffff !important; \}/);
+});
+
+test('ghibli renders its components, its hover, its placeholder, its scrollbar and its gradient', () => {
+  const theme = themeFile('ghibli');
+  const dom = fullDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(theme, pageTokens());
+  const css = engine.css;
+
+  assert.match(css, /\[data-webin~="bt"\] \{[^}]*background-color: #6f8f72 !important/);
+  assert.match(css, /\[data-webin~="bt"\]:hover \{[^}]*background-color: #607c63 !important/);
+  assert.match(css, /\[data-webin~="fd"\]::placeholder \{[^}]*color: #8b917d !important/);
+  assert.match(css, /\[data-webin~="fd"\]:focus-visible \{[^}]*border-color: #86a786 !important/);
+  assert.match(css, /\[data-webin~="sb"\] \[aria-current\][^{]*\{[^}]*background-color: rgba\(111, 143, 114, 0\.18\)/,
+    'the sidebar\'s active item is the current one');
+  assert.match(css, /\[data-webin~="sf"\] \{[^}]*backdrop-filter: blur\(14px\) !important/);
+  assert.match(css, /::-webkit-scrollbar-thumb \{[^}]*background-color: #a8b99a/);
+  assert.match(css, /html \{ background: radial-gradient\(circle at 20% 15%[^;]*linear-gradient\(145deg/,
+    'the page gradient is painted as the file wrote it');
+  assert.match(css, /transition: all 0\.28s ease !important/);
+  assert.ok(!css.includes('url('), 'and nothing in any of it can fetch');
+});
+
+test('a rule\'s fill is what the readability guarantee measures against', () => {
+  // Black buttons with white text: the token pass would have made this button the accent
+  // with dark ink, and a guard that believed it would force the white text to black.
+  const theme = themeFile('brutalist02');
+  const dom = fullDom();
+  new ThemeEngine({ doc: dom.window.document, view: dom.window }).apply(theme, pageTokens());
+  const marks = marksOf(dom, 'btn');
+  assert.ok(!marks.includes('kd'), 'white on black is readable, so no ink mark');
+  assert.ok(!marks.includes('on'), 'and a button the rule paints is no longer "on the accent"');
+});
+
+test('a theme may say how to find its targets, and a selector it names is honoured', () => {
+  const theme = normaliseTheme({
+    name: 'Selectors', palette: { background: '#fff', surface: '#eee', text: '#000', accent: '#00f' },
+    cards: { background: '#fafafa', shadow: '0 2px 8px rgba(0,0,0,0.2)' },
+    detect: { card: ['.product-tile', '.tile'] },
+    selectors: {
+      'main h2': { color: '#123456', 'text-transform': 'uppercase' },
+      '.product-tile:hover': 'transform: translateY(-2px); outline: 2px solid red;',
+    },
+    css: '@media (max-width: 600px) { nav { padding: 0 } } .evil { background: url(https://x/y) }',
+  });
+  assert.equal(theme.detect.surface, '.product-tile, .tile');
+
+  const dom = fullDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(theme, pageTokens());
+  const css = engine.css;
+
+  assert.ok(marksOf(dom, 'card').includes('sf'), 'found by the theme\'s own selector');
+  assert.match(css, /main h2 \{ color: #123456 !important; text-transform: uppercase !important; \}/);
+  assert.match(css, /\.product-tile:hover \{ transform: translateY\(-2px\) !important; outline: 2px solid red !important; \}/);
+  assert.match(css, /@media \(max-width: 600px\) \{ nav \{ padding: 0 !important; \} \}/);
+  assert.ok(!css.includes('url('), 'a url() is refused wherever it is written');
+  assert.ok(!css.includes('.evil'), 'and the rule that carried it is gone with it');
+  assert.ok(css.lastIndexOf('main h2 {') > css.lastIndexOf('~="kd"'), 'named selectors come last, after the guarantees');
+});
+
+test('the theme\'s rules survive a round trip through its own file format', async () => {
+  const { themeToFile, encodeShareCode, decodeShareCode } = await import('../src/shared/theme-format.js');
+  const theme = themeFile('ghibli');
+  const back = normaliseTheme(themeToFile(theme));
+  assert.deepEqual(back.rules, theme.rules);
+  assert.deepEqual(back.effects.backdrop, theme.effects.backdrop);
+  const decoded = await decodeShareCode(await encodeShareCode(theme));
+  assert.deepEqual(normaliseTheme(decoded).rules, theme.rules);
 });

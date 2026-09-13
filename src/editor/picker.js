@@ -8,7 +8,7 @@
 
 import { Emitter, rafThrottle } from '../shared/util.js';
 import { OWNED_ATTR } from '../shared/types.js';
-import { isSelectable } from './model.js';
+import { isSelectable, firstSelectableChild, selectableSibling } from './model.js';
 
 export class Picker extends Emitter {
   #doc;
@@ -101,6 +101,32 @@ export class Picker extends Emitter {
     const current = this.#selection[0];
     const parent = current?.parentElement;
     if (parent && isSelectable(parent, this.#view)) this.select(parent);
+  }
+
+  /**
+   * Walks into the current selection (§25).
+   * The way back down after `selectParent`, and the only way to reach a child that its
+   * own parent covers completely — a click there never gets past the parent.
+   */
+  selectChild() {
+    const current = this.#selection[0];
+    if (!current) return;
+    const child = firstSelectableChild(current, this.#view);
+    if (child) this.select(child);
+  }
+
+  /**
+   * Steps sideways, to the next or the previous sibling (§25).
+   *
+   * Up and down alone leave every sibling but the first unreachable from the keyboard,
+   * and unreachable by click too when a parent covers them — the second card in a row is
+   * one press away from the first, not a climb up and a guess back down.
+   */
+  selectSibling(direction = 1) {
+    const current = this.#selection[0];
+    if (!current) return;
+    const sibling = selectableSibling(current, direction, this.#view);
+    if (sibling) this.select(sibling);
   }
 
   #handleMove = (event) => {

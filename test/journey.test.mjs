@@ -54,6 +54,10 @@ test('open the panel, pick a theme, and the page changes', async () => {
   assert.ok(dom.window.document.querySelectorAll(`[${TOKEN_ATTR}]`).length > 0, 'the page is stamped');
   assert.match(webin.engine.css, /Webin — Terminal/);
 
+  // What the user asked for happened. How many rules that took was a report on the engine,
+  // and it was the only thing the message said out loud.
+  assert.equal(webin.panel.shadow.querySelector('.wb-toast span').textContent, 'Terminal applied');
+
   const site = await backend.get('site:example.com');
   assert.equal(site['site:example.com'].themeId, 'terminal');
   assert.match(site['site:example.com'].bootCss, /background-color: #020617/i);
@@ -523,4 +527,72 @@ test('the panel survives a theme that is trying to break it', async () => {
   assert.ok(names.includes('<img src=x onerror=alert(1)>'),
     'and it is still shown verbatim, so the user can see what they imported');
   webin.destroy();
+});
+
+test('the theme and the edits are removed separately, each from its own tab', async () => {
+  // Briefly Remove took both, which read as tidy and was the panel deciding for the user
+  // which of their changes to discard. They are two different changes to the site.
+  const backend = new MemoryBackend();
+  const { dom, webin } = await makeRuntime(backend);
+  await webin.boot();
+  await webin.open();
+
+  await click(webin.panel.shadow, '[data-action="apply"][data-value="nord"]');
+  await click(webin.panel.shadow, '[data-action="mode"][data-value="edit"]');
+  webin.editor.select(dom.window.document.querySelector('header'));
+  await flush();
+  webin.editor.setProperty('background-color', '#123456');
+  await click(webin.panel.shadow, '[data-action="save"]');
+  const sheet = () => dom.window.document.getElementById('webin-overrides').textContent;
+
+  // Removing the theme from the Themes tab leaves the hand edit standing.
+  await click(webin.panel.shadow, '[data-action="mode"][data-value="gallery"]');
+  await click(webin.panel.shadow, '[data-action="clear"]');
+  await flush();
+  assert.equal(webin.active, null, 'the theme is gone');
+  assert.match(sheet(), /#123456/, 'and the edit is not');
+
+  // Removing the edits from the Edit tab is the other half.
+  await click(webin.panel.shadow, '[data-action="mode"][data-value="edit"]');
+  await click(webin.panel.shadow, '[data-action="reset-site"]');
+  await flush();
+  assert.equal(sheet().trim(), '', 'now the edit is gone too');
+  assert.equal(dom.window.document.querySelector('[data-webin-id]'), null);
+
+  // And neither comes back on the next visit.
+  const second = await makeRuntime(backend);
+  await second.webin.boot();
+  await flush();
+  const restored = second.dom.window.document.getElementById('webin-overrides');
+  assert.ok(!restored || !restored.textContent.includes('#123456'));
+});
+
+test('a value you changed offers its way back to the site\'s own', async () => {
+  const backend = new MemoryBackend();
+  const { dom, webin } = await makeRuntime(backend);
+  await webin.boot();
+  await webin.open();
+  await click(webin.panel.shadow, '[data-action="mode"][data-value="edit"]');
+  webin.editor.select(dom.window.document.querySelector('header'));
+  await flush();
+
+  // The control keeps its place in the layout always, so the field beside it never
+  // changes width; only its enabled state comes and goes.
+  const revert = () => webin.panel.shadow
+    .querySelector('[data-action="revert-prop"][data-value="background-color"]:not([disabled])');
+  assert.equal(revert(), null, 'nothing to revert until something is changed');
+
+  webin.editor.setProperty('background-color', '#123456');
+  await flush();
+  assert.ok(revert(), 'a changed value offers the way back');
+
+  await click(webin.panel.shadow, '[data-action="revert-prop"][data-value="background-color"]');
+  await flush();
+  assert.doesNotMatch(dom.window.document.getElementById('webin-overrides').textContent, /#123456/);
+  assert.equal(revert(), null, 'and the control goes quiet with it');
+
+  // Reverting is a decision, not an escape from the history.
+  webin.editor.undo();
+  await flush();
+  assert.match(dom.window.document.getElementById('webin-overrides').textContent, /#123456/);
 });

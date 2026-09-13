@@ -265,6 +265,12 @@ const TEMPLATE = `
 export const overlayCss = /* css */ `
 .webin-marks { position: absolute; inset: 0; z-index: var(--z-marks); pointer-events: none; }
 
+/* The hidden attribute is how every mark here is put away, and a class that sets its own
+   display value silently outranks the browser's rule for it — which is how the hover label
+   came to sit on the page after the pointer had moved on, and stayed there after the
+   editor had let go of the page entirely. One rule, so no mark can repeat that. */
+[hidden] { display: none !important; }
+
 .webin-hover {
   position: absolute;
   border: 1px solid var(--selection);

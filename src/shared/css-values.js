@@ -78,6 +78,45 @@ export function toPixels(value, context = {}) {
 }
 
 /**
+ * How long a `background-image` value may be.
+ *
+ * A picture chosen in the inspector is stored as a `data:` URL, because a declaration is
+ * the only place an edit has to put it. This is the real ceiling on that, and the image
+ * reader sizes its output to fit — it is exported so the two cannot drift apart, which is
+ * exactly how the picker came to produce a value the gate below then threw away.
+ */
+export const MAX_IMAGE_VALUE = 1_600_000;
+
+/**
+ * The one shape a `url()` may take: an inline image, base64, and nothing else.
+ *
+ * `isSafeValue` refuses every URL because a URL in a value is a fetch the page did not ask
+ * for — a beacon that fires on whatever site the edit is saved against. A `data:` URL
+ * makes no request at all, so it gives that rule nothing to protect against, and it is the
+ * only way an edit can hold a picture.
+ *
+ * Anchored, and over a charset that cannot express a second declaration: base64 has no
+ * `;`, `{`, `<` or whitespace, so there is no room after the payload for anything else.
+ * Base64 specifically — a plain `data:image/svg+xml,<svg …>` would let the markup be
+ * written out in the open, and refusing it costs nothing, since everything the picker
+ * produces is encoded anyway.
+ */
+const IMAGE_DATA_URL = /^url\("data:image\/(png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}"\)$/;
+
+/**
+ * True for a `background-image` holding an inline image this extension produced.
+ *
+ * Kept separate from `isSafeValue` rather than folded into it, so the blanket rule against
+ * URLs stays blanket everywhere else.
+ */
+export function isSafeImageValue(value) {
+  const raw = String(value ?? '').trim();
+  if (raw.length > MAX_IMAGE_VALUE) return false;
+  if (CONTROL_CHARS.test(raw)) return false;
+  return IMAGE_DATA_URL.test(raw);
+}
+
+/**
  * Rejects values that could smuggle extra declarations or fetches into the page (§74).
  * Anything containing a declaration separator, a comment, or a URL is refused outright.
  */
@@ -116,18 +155,38 @@ export const ALLOWED_PROPERTIES = new Set([
   'word-break', 'overflow-wrap', 'color',
   // Appearance
   'background-color', 'background-image', 'background-size', 'background-position',
-  'background-repeat', 'opacity', 'box-shadow', 'text-shadow', 'filter', 'mix-blend-mode',
+  'background-repeat', 'background-attachment', 'background-clip', 'background-origin',
+  'opacity', 'box-shadow', 'text-shadow', 'filter', 'mix-blend-mode',
+  // A backdrop blur is a filter on what is behind the box rather than on the box. Both
+  // spellings, because Safari still wants the prefix and a theme that asks for glass
+  // should get it there too.
+  'backdrop-filter', '-webkit-backdrop-filter',
   'border', 'border-width', 'border-style', 'border-color',
+  'border-top', 'border-right', 'border-bottom', 'border-left',
   'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width',
+  'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color',
   'border-radius', 'border-top-left-radius', 'border-top-right-radius',
   'border-bottom-right-radius', 'border-bottom-left-radius',
-  'outline', 'outline-color', 'outline-width', 'outline-style',
+  'outline', 'outline-color', 'outline-width', 'outline-style', 'outline-offset',
+  // Text decoration and a few more typographic longhands a theme file tends to name.
+  'text-decoration-color', 'text-decoration-style', 'text-underline-offset', 'font-variant',
+  'font-stretch', 'text-indent', 'vertical-align', 'list-style',
+  // The page's own chrome: the scrollbar, the caret, a form control's tint.
+  'scrollbar-color', 'scrollbar-width', 'caret-color', 'accent-color', 'cursor',
+  // Motion. `transition` cannot fetch anything and cannot name a rule, and a theme that
+  // says how fast its hover should be is saying something worth honouring.
+  'transition', 'transition-property', 'transition-duration', 'transition-timing-function',
+  'transition-delay',
   // Transform
   'transform', 'transform-origin', 'rotate', 'scale', 'translate',
   // SVG / media (§104, §105)
   'fill', 'stroke', 'stroke-width', 'object-fit', 'object-position',
   // Layout escape hatch used by hide (§23)
   'pointer-events',
+  // Only reachable from written CSS, and only useful there: a generated box needs
+  // `content` before it exists at all. Safe for the same reason every other value is —
+  // `isSafeValue` refuses a `url()`, so this cannot become a fetch.
+  'content',
 ]);
 
 /** True when the property may be written by the override engine. */
@@ -145,6 +204,15 @@ export function validateDeclaration(property, value) {
   if (!isAllowedProperty(prop)) return { ok: false, reason: `"${prop}" is not an editable property.` };
   const val = String(value ?? '').trim();
   if (!val) return { ok: false, reason: 'Empty value.' };
+
+  // A background may be a picture. Every other value, and every other property, keeps the
+  // rule that a `url()` is refused outright.
+  if (prop === 'background-image' && /^url\s*\(/i.test(val)) {
+    return isSafeImageValue(val)
+      ? { ok: true, property: prop, value: val }
+      : { ok: false, reason: 'Only an inline image can be used as a background.' };
+  }
+
   if (!isSafeValue(val)) return { ok: false, reason: 'Value contains characters that are not allowed.' };
   return { ok: true, property: prop, value: val };
 }

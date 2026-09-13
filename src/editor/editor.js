@@ -19,10 +19,13 @@
  */
 
 import { Emitter, uid } from '../shared/util.js';
-import { OpKind, OWNED_ATTR, EditMode, Breakpoint } from '../shared/types.js';
+import { OpKind, OWNED_ATTR, EditMode, EditTool, Breakpoint } from '../shared/types.js';
+import { SiteStylesheet } from './site-sheet.js';
+import { formatDeclarations, parseDeclarations } from '../shared/css-text.js';
 import { scopeFromPath } from '../storage/edits.js';
 import { buildIdentity, resolveIdentity } from './identity.js';
-import { ElementModel, labelFor } from './model.js';
+import { ElementModel, labelFor, isSelectable, firstSelectableChild, selectableSibling } from './model.js';
+import { appliedStyles } from './cascade.js';
 import { OverrideEngine } from './overrides.js';
 import { HistoryEngine } from './history.js';
 import { Picker } from './picker.js';
@@ -33,6 +36,15 @@ import { analyse } from './layout.js';
 import { collectShadowRoots } from '../content/dom.js';
 import { overlayCss } from './overlay.js';
 import { overlayTokens } from '../ui/overlay-css.js';
+
+/** The applied styles, or nothing: a page's stylesheets can throw for reasons of their own. */
+function safeStyles(element, view) {
+  try {
+    return appliedStyles(element, view);
+  } catch {
+    return null;
+  }
+}
 
 /** How far an arrow key moves a selected element. Shift makes it a bigger step. */
 const NUDGE = 1;
@@ -55,6 +67,15 @@ export class Editor extends Emitter {
   #overlayHost = null;
 
   #mode = EditMode.OFF;
+  /**
+   * Whether the editor has hold of the page at all.
+   *
+   * Kept here rather than in the panel because it is not a way of looking at the page: the
+   * picker, the overlay, the gestures and the keyboard all have to agree about it, and
+   * with the arrow held every one of them lets go.
+   */
+  #tool = EditTool.POINT;
+  #site;
   #selection = [];
   /**
    * Identities captured when an element was selected, not when it was edited.
@@ -99,6 +120,7 @@ export class Editor extends Emitter {
 
     this.#model = new ElementModel({ doc, view });
     this.#overrides = new OverrideEngine({ doc, view });
+    this.#site = new SiteStylesheet(doc);
     this.#history = new HistoryEngine();
     this.#picker = new Picker({ doc, view, host: null });
     this.#textEditor = new TextEditor({ view });
@@ -108,6 +130,7 @@ export class Editor extends Emitter {
   }
 
   get mode() { return this.#mode; }
+  get tool() { return this.#tool; }
   get active() { return this.#mode !== EditMode.OFF; }
   get selection() { return [...this.#selection]; }
   get dirty() { return this.#dirty; }
@@ -120,9 +143,20 @@ export class Editor extends Emitter {
     const element = this.#primary();
     return {
       mode: this.#mode,
+      tool: this.#tool,
       dirty: this.#dirty,
+      // Changes made but not yet saved. The panel counts these alongside the ones already
+      // in storage, so "what have I done to this site" is answered before you press Save.
+      pending: this.#pending.size,
       history: this.#history.state(),
       unmatched: this.#unmatched.length,
+      // How many rules the site stylesheet is carrying, so the code tool can say when
+      // there is something written that the selection does not show.
+      siteRules: this.#site.rules.length,
+      // Both scopes of the code tool. Kept here rather than fetched separately so that
+      // every repaint the panel already does carries the current text with it.
+      elementCss: element ? this.elementCss() : '',
+      siteCss: this.#site.text,
       selection: element ? this.detail() : null,
     };
   }
@@ -132,7 +166,13 @@ export class Editor extends Emitter {
   /** Applies saved changes, with no UI. Runs on every page load. */
   async reapply() {
     if (!this.#edits) return { applied: 0, parked: 0 };
-    const changes = await this.#edits.changesFor(this.#host, this.#view.location?.pathname ?? '/');
+    const path = this.#view.location?.pathname ?? '/';
+
+    // The stylesheet first. It is not anchored to an element, so it has nothing to wait
+    // for, and it should be painting before the page has finished settling.
+    this.restoreSiteCss(await this.#edits.sheetFor(this.#host, path));
+
+    const changes = await this.#edits.changesFor(this.#host, path);
     if (!changes.length) return { applied: 0, parked: 0 };
 
     this.#overrides.mount();
@@ -187,7 +227,11 @@ export class Editor extends Emitter {
   /** Opens the editor over the page. */
   enter(mode = EditMode.DESIGN) {
     this.#mode = mode === EditMode.INSPECT ? EditMode.INSPECT : EditMode.DESIGN;
+    // Opening Edit mode is asking to edit, so it opens holding the pencil. The arrow is
+    // how you put the editor down again, not how you find it.
+    this.#tool = this.#mode === EditMode.DESIGN ? EditTool.EDIT : EditTool.POINT;
     this.#overrides.mount();
+    this.#site.mount();
     this.#mountOverlay();
     this.#overlay?.setResizable(this.#mode === EditMode.DESIGN);
     this.#overlay?.setSpacing(this.#mode === EditMode.DESIGN);
@@ -205,6 +249,7 @@ export class Editor extends Emitter {
   /** Closes the editor. Overrides stay: leaving the editor is not undoing your work. */
   exit() {
     this.#mode = EditMode.OFF;
+    this.#tool = EditTool.POINT;
     this.#picker.stop();
     this.#textEditor.cancel();
     this.#interactions.cancel();
@@ -214,11 +259,64 @@ export class Editor extends Emitter {
     this.emit('change');
   }
 
+  /**
+   * Picks the editor up, or puts it down.
+   *
+   * Putting it down is the whole point of the arrow, so it is thorough: any open text edit
+   * is committed, the selection goes, the highlight goes, the gestures are cancelled and
+   * the picker stops listening — the page is a page again. What it does not touch is the
+   * work: every change already made stays on the page, because letting go of a tool is not
+   * a way of undoing what it did.
+   */
+  setTool(tool) {
+    const next = tool === EditTool.EDIT || tool === EditTool.CODE ? tool : EditTool.POINT;
+    if (next === this.#tool) return;
+    this.#tool = next;
+    this.#applyTool();
+    this.emit('change');
+  }
+
+  /**
+   * Makes the page agree with the tool being held.
+   *
+   * Every layer that can touch the page is switched from one place, because a picker that
+   * is still hovering while the overlay has stopped drawing is a page that highlights
+   * things it will not let you select.
+   */
+  #applyTool() {
+    const engaged = this.#engaged();
+    // The code tool selects but does not drag. A resize grip is a way of writing a width,
+    // and someone who has chosen to write their widths does not need two of them — nor a
+    // handle sitting over the element they are trying to read the box of.
+    const editing = this.#tool === EditTool.EDIT && this.#mode === EditMode.DESIGN;
+    if (engaged) {
+      this.#picker.setInteractive(true);
+      this.#picker.start({ interactive: true });
+    } else {
+      this.#textEditor.commit();
+      this.#interactions.cancel();
+      // Order matters: clearing while the picker is still running is what lets the
+      // selection event through to the overlay. Stopping first would drop it.
+      this.#picker.clear();
+      this.#picker.stop();
+      this.#overlay?.setHover(null);
+    }
+    this.#overlay?.setResizable(editing);
+    this.#overlay?.setSpacing(editing);
+  }
+
+  /** True while a tool that touches the page is held. */
+  #engaged() {
+    return this.#mode === EditMode.DESIGN
+      && (this.#tool === EditTool.EDIT || this.#tool === EditTool.CODE);
+  }
+
   /** Full teardown: the page goes back to exactly what the server sent. */
   destroy() {
     this.exit();
     this.#monitor.suspend(() => this.#overrides.revertAll());
     this.#overrides.teardown();
+    this.#site.teardown();
     this.#history.reset();
     this.#pending.clear();
     this.#unmatched = [];
@@ -315,7 +413,7 @@ export class Editor extends Emitter {
   };
 
   #onPointerDown = (event) => {
-    if (this.#mode !== EditMode.DESIGN) return;
+    if (this.#mode !== EditMode.DESIGN || this.#tool !== EditTool.EDIT) return;
     const element = this.#primary();
     if (!element) return;
 
@@ -355,8 +453,25 @@ export class Editor extends Emitter {
 
   #onKeyDown = (event) => {
     if (this.#mode === EditMode.OFF) return;
-    if (this.#textEditor.active) return;
     if (event.composedPath?.().some((node) => node?.hasAttribute?.(OWNED_ATTR))) return;
+    // With the arrow held the editor has let go of the page, and that has to include the
+    // keyboard: a site's own search box, its shortcuts and its undo are its own again.
+    if (!this.#engaged()) return;
+
+    // Enter means "done", and it is claimed here — on the document, in the capture phase —
+    // rather than left to the element being typed in. A site's own Enter handler sits
+    // above that element and would run first: a form submits, a link is followed, the page
+    // navigates, and the panel goes with it. So while the pencil is held the page never
+    // sees this key at all. What it does is finish the words and put the editor down;
+    // Shift+Enter is left alone, because inside a text edit that is a line break.
+    if (event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (this.#textEditor.active) this.#textEditor.commit();
+      this.setTool(EditTool.POINT);
+      return;
+    }
+    if (this.#textEditor.active) return;
 
     const meta = event.metaKey || event.ctrlKey;
     if (meta && event.key.toLowerCase() === 'z') {
@@ -420,6 +535,16 @@ export class Editor extends Emitter {
     this.#picker.selectParent();
   }
 
+  /** Steps into the selection — the way back down from `selectParent`. */
+  selectChild() {
+    this.#picker.selectChild();
+  }
+
+  /** Steps sideways: `1` for the next sibling, `-1` for the previous. */
+  selectSibling(direction = 1) {
+    this.#picker.selectSibling(direction < 0 ? -1 : 1);
+  }
+
   /** The inspector's payload for the current selection. */
   detail() {
     const element = this.#primary();
@@ -433,6 +558,14 @@ export class Editor extends Emitter {
       // other, and the inspector needs both.
       context: analyse(element, this.#view),
       overrides: this.#overrides.overridesFor(element)[Breakpoint.ALL] ?? {},
+      canSelectParent: isSelectable(element.parentElement, this.#view),
+      canSelectChild: !!firstSelectableChild(element, this.#view),
+      canSelectPrevious: !!selectableSibling(element, -1, this.#view),
+      canSelectNext: !!selectableSibling(element, 1, this.#view),
+      // What the site's own CSS says about this element, rule by rule — the browser's
+      // Styles pane, in the column. Read here rather than in the model because it is
+      // about the stylesheets, not the element, and is wanted fresh on every selection.
+      styles: safeStyles(element, this.#view),
       hidden: this.#overrides.overrideValue(element, 'display') === 'none',
       removed: this.#overrides.isRemoved(element),
       canEditText: this.#textEditor.canEdit(element),
@@ -496,14 +629,112 @@ export class Editor extends Emitter {
     this.#commitStyle({ [property]: value }, `${labelFor(element)} · ${property}`);
   }
 
-  #commitStyle(properties, label) {
+  /**
+   * Sets several properties as a single change.
+   *
+   * A background image is four declarations — the picture, how it is sized, where it sits
+   * and whether it tiles — and they are one decision. Committed one at a time they would
+   * be four steps to undo, and three of the four would leave the page in a state nobody
+   * asked for on the way back.
+   *
+   * @param {Object<string, string|null>} properties
+   * @param {string} what named in the history entry, in place of a property name
+   */
+  setProperties(properties, what) {
+    const element = this.#primary();
+    if (!element || !Object.keys(properties).length) return;
+    this.#commitStyle(properties, `${labelFor(element)} · ${what}`);
+  }
+
+  /**
+   * Drops overrides and lets the site's own values through again (§51).
+   *
+   * Recorded like any other change, so it is undoable — reverting is a decision, not an
+   * escape from the history.
+   */
+  clearProperties(properties) {
+    const element = this.#primary();
+    if (!element || !properties.length) return;
+    this.#commitStyle(
+      Object.fromEntries(properties.map((property) => [property, null])),
+      `${labelFor(element)} · revert`,
+      { discrete: true },
+    );
+  }
+
+  // ── Written CSS ────────────────────────────────────────────────────────
+
+  /** The selection's own overrides, as the CSS someone would have typed. */
+  elementCss() {
+    const element = this.#primary();
+    if (!element) return '';
+    return formatDeclarations(this.#overrides.overridesFor(element)[Breakpoint.ALL] ?? {});
+  }
+
+  /**
+   * Replaces the selection's overrides with what was written.
+   *
+   * A property that was there and is not any more has been deleted on purpose, so it is
+   * reverted rather than left standing — otherwise the text would say one thing and the
+   * page would show another, and the only way back would be finding the row in the
+   * inspector. Setting and reverting go in together as one entry, because one edit to one
+   * block of text is one thing the user did and should take one undo.
+   *
+   * @returns {{ok:boolean, applied:number, removed:number, errors:string[]}}
+   */
+  applyElementCss(css) {
+    const element = this.#primary();
+    if (!element) return { ok: false, applied: 0, removed: 0, errors: ['Nothing is selected.'] };
+
+    const { properties, errors } = parseDeclarations(css);
+    const before = this.#overrides.overridesFor(element)[Breakpoint.ALL] ?? {};
+    const removed = Object.keys(before).filter((property) => !(property in properties));
+
+    const change = { ...properties };
+    for (const property of removed) change[property] = null;
+    if (!Object.keys(change).length) return { ok: true, applied: 0, removed: 0, errors };
+
+    this.#commitStyle(change, `${labelFor(element)} · written CSS`, { discrete: true });
+    return { ok: true, applied: Object.keys(properties).length, removed: removed.length, errors };
+  }
+
+  /** The site's own stylesheet, as written. */
+  siteCss() {
+    return this.#site.text;
+  }
+
+  /**
+   * Replaces the site stylesheet.
+   *
+   * Not part of the undo history, and deliberately so: the history is a list of changes to
+   * elements, and folding a block of text somebody is still writing into it would mean an
+   * undo halfway through a rule. The text is its own record, and the way back from it is
+   * to edit it.
+   *
+   * @returns {{rules:number, errors:string[]}}
+   */
+  applySiteCss(css) {
+    const result = this.#monitor.suspend(() => this.#site.set(css));
+    this.#dirty = true;
+    this.emit('change');
+    return result;
+  }
+
+  /** Puts a saved stylesheet back, on load, without marking the page unsaved. */
+  restoreSiteCss(css) {
+    if (!css) return;
+    this.#site.mount();
+    this.#monitor.suspend(() => this.#site.set(css));
+  }
+
+  #commitStyle(properties, label, { discrete = false } = {}) {
     const element = this.#primary();
     if (!element) return;
 
     // A commit with no preview before it still needs its starting values.
     this.#recordBefore(element, properties);
 
-    this.#history.begin(label);
+    this.#history.begin(label, { discrete });
     const changeId = this.#model.idOf(element);
     for (const [property, value] of Object.entries(properties)) {
       const key = `${changeId}|${property}`;
@@ -649,9 +880,20 @@ export class Editor extends Emitter {
 
   async save() {
     if (!this.#edits) return { saved: 0 };
+    const path = this.#view.location?.pathname ?? '/';
+
+    // The stylesheet is saved whether or not any element changed, and its own state is
+    // what decides — a sheet emptied on purpose has to be able to save as empty.
+    const sheetChanged = this.#site.text !== (await this.#edits.sheetFor(this.#host, path));
+    if (sheetChanged) await this.#edits.saveSheet(this.#host, path, this.#site.text);
+
     const changes = [...this.#pending.values()];
-    if (!changes.length) { this.#dirty = false; this.emit('change'); return { saved: 0 }; }
-    await this.#edits.addAll(this.#host, this.#view.location?.pathname ?? '/', changes);
+    if (!changes.length) {
+      this.#dirty = false;
+      this.emit('change');
+      return { saved: sheetChanged ? 1 : 0, scope: scopeFromPath(path) };
+    }
+    await this.#edits.addAll(this.#host, path, changes);
     this.#pending.clear();
     this.#dirty = false;
     this.emit('change');
@@ -684,20 +926,24 @@ export class Editor extends Emitter {
   }
 
   async resetPage() {
-    this.#monitor.suspend(() => this.#overrides.revertAll());
+    this.#monitor.suspend(() => { this.#overrides.revertAll(); this.#site.clear(); });
     this.#pending.clear();
     this.#history.reset();
     this.#dirty = false;
-    const result = this.#edits
-      ? await this.#edits.resetPath(this.#host, this.#view.location?.pathname ?? '/')
-      : { removed: 0, remaining: 0 };
+    const path = this.#view.location?.pathname ?? '/';
+    const result = this.#edits ? await this.#edits.resetPath(this.#host, path) : { removed: 0, remaining: 0 };
+    // A sheet written for the whole site is not this page's to remove, and it comes back
+    // the moment the page's own is gone — the same as it would on the next load.
+    if (this.#edits) this.restoreSiteCss(await this.#edits.sheetFor(this.#host, path));
     this.#select([]);
     this.emit('change');
     return result;
   }
 
   async resetSite() {
-    this.#monitor.suspend(() => this.#overrides.revertAll());
+    // The stylesheet goes with the element changes: storage forgets both, and a sheet
+    // still painting a page that storage says is untouched would be a lie on the page.
+    this.#monitor.suspend(() => { this.#overrides.revertAll(); this.#site.clear(); });
     this.#pending.clear();
     this.#history.reset();
     this.#dirty = false;

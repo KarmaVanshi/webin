@@ -71,6 +71,74 @@ selection's grips to resize it, drag the element to move it, double-click text t
 it, hide it, or take it off the page entirely. Undo is a keystroke away and knows a drag
 is one action, not fifty.
 
+Beside the **Background** colour there is a `+`. It takes a picture instead — PNG, JPEG,
+HEIC or SVG — and puts it behind whatever you have selected, centred and sized to fit it.
+How it is sized is a judgement rather than a constant: filling the box and cropping the
+overhang is what somebody choosing a background usually pictures, but only while the crop
+is small. A tall photo on a wide strip keeps about a twentieth of itself that way, and the
+result is not a background so much as a smear of whichever pixels were in the middle — so
+where that much would be lost, the whole picture is shown instead. The toast says which
+way it went, because it is a guess about your picture and you are the one who can tell.
+
+The page is the same judgement against a different box. A body's background paints the
+entire viewport however short the body is, but it is *sized* against the body's own box, so
+on a page with two lines of content `cover` scales the picture to a 180-pixel strip and
+stretches that across the screen. Anchoring it to the viewport makes the box the thing the
+picture is actually painted on, and then the same comparison applies.
+
+The colour underneath is left where it was, so it still shows through a transparent PNG and
+still shows if the image ever fails to paint. Reverting the row takes the picture, its
+sizing and the colour together, because they are one decision and one row. If the guess is
+wrong, the `</>` tool has the declarations in writing.
+
+A photo is not stored as a photo. There is nowhere to put a file — an edit is a set of CSS
+declarations — so the picture is decoded, scaled to fit 2560px on its longest edge, and
+re-encoded until it fits a budget that leaves the rest of your themes and edits room to
+live in. An SVG is left as text, because rasterising a vector to put it behind a page
+would be vandalism. HEIC is offered because phones produce it and refused with an
+explanation where the browser has no decoder for it, which is most of them — storing four
+megabytes of undisplayable data would be the worse answer.
+
+Three tools sit at the top of the edit column, and the first two answer one question: is
+Webin holding the page or not. The **pencil** is the editor engaged — the pointer
+highlights what it is over, a click selects, and everything in the inspector changes the
+page. The **arrow** is Webin letting go: nothing highlights, nothing stays selected, no
+key is intercepted, and the site is a site again, so you can read it or click through to
+the page you actually meant to edit. Edit mode opens holding the pencil, because asking to
+edit is asking to edit.
+
+The third is **`</>`**, the pencil's other hand: it selects the same way and changes the
+same page, but the change is written rather than dialled. It opens two boxes. The first is
+the selection's own declarations as CSS — the inspector's rows, written out — so a property
+with no widget of its own is still reachable; underneath it, the CSS the site itself
+applies to that element, so what you are overriding is in view while you type. The second
+is a stylesheet for the whole site, where a rule gets a selector of its own and can
+therefore say things no click can land on: a `::before` that does not exist yet, every
+third row of a table, a rule that only applies on a narrow screen. Both are parsed through
+the same gate as every widget, so the property allowlist and the value checks hold exactly
+as they do everywhere else — writing CSS buys reach and speed, never permission, and
+anything refused is named underneath the box you typed it in rather than dropped in
+silence. Deleting a line reverts the property it named, because otherwise the text would
+say one thing and the page would show another. Tab indents, ⌘Enter applies, and a draft
+survives clicking around the page to look at something else. A rule you write outranks
+the theme however plain its selector — `footer { color: red }` is lifted above the theme's
+own rules on its way in, so "1 rule live" always means one rule visibly live — and an edit
+made by clicking outranks both, because a colour picked for *this* button is a decision
+about this one. Resize grips are put away while it is held: a grip is a way of writing a
+width, and someone who has chosen to write their widths does not need two of them.
+
+Above the rows, the selection is named the way the page names it — `button#cta.primary` —
+followed by every rule the site applies to it, most powerful first, each declaration as the
+author wrote it and struck through where a stronger one has overridden it: the browser's
+Styles pane, in the column. Four arrows beside the name step to the parent, into the first
+child, and sideways to the previous and next sibling, so the second card in a row is one
+press from the first rather than a climb up and a guess back down.
+
+**Enter** means done: it finishes any words you were typing, keeps them, and puts the
+editor down into the arrow. While the pencil is held the page never sees Enter at all —
+a site's own form or link cannot navigate out from under you mid-sentence — and the moment
+you switch to the arrow the key belongs to the site again.
+
 Then **Save**, and it comes back next time.
 
 Three things make that last sentence true on a real website:
@@ -128,6 +196,39 @@ and one rule is written per token. Rules are O(tokens) — a couple of dozen —
 O(elements), however large the page is. The generated sheet is a single constructed
 stylesheet, adopted by the document and by every open shadow root, so updating the theme
 is one `replaceSync` rather than thousands of DOM writes.
+
+**4a. Roles, where appearance is not enough.** A card can be found by what it paints; a
+modal cannot. What separates a nav bar from a dialog from a tooltip is what the document
+*says* they are, so a theme may also style nine structural roles — nav, header, footer,
+sidebar, modal, popover, button, field, table — each detected from tags and ARIA first. A
+theme may add its own way of finding them (`detect: { card: [".tile", ".product"] }`, or
+the `domDetection.classification` block a generated file tends to carry), and those
+selectors are consulted only where the document has not already answered.
+
+A role names a **material** — a bundle of blur, translucency, edge, corner and shadow —
+and a material names only what it *changes*, so `{ "blur": 40 }` reads as "a modal, but
+blurrier" rather than as a second theme repeating itself. Hover, press and focus can be
+stored the same way — as clamped amounts — and the engine composes them from the theme's
+own palette. Movement is kept to buttons and cards: a nav bar that grows under the pointer
+takes its fixed-position children with it.
+
+**4b. Everything else the file says.** A theme file describes far more than a palette and a
+few levers: its buttons, cards, inputs, nav, sidebar, modal, tooltip, links, headings,
+body, scrollbar and text selection, each in CSS-shaped words — `boxShadow`, `borderColor`,
+`textTransform`, `hoverBackground`, `focusBorder`, `placeholder` — plus a written-out page
+gradient and a `transition`. All of it is read, whichever of the dozen spellings the file
+used, and rendered as **rules** against those targets: the brutalist file's three-pixel
+black borders and offset block shadows land on every card, its uppercase black buttons on
+every button, its hover, focus and placeholder colours in the states they name. A theme may
+also name selectors outright — a `selectors` map, a `rules` list, or a `css` string — and
+those are written last, after the readability guarantees, exactly as a stylesheet you type
+in the editor is. What a rule paints is what the guarantee measures text against, so white
+on a black button stays white. Every declaration, read or written, goes through the same
+gate as the editor's: the property allowlist and the value checks, no `url()`, no way to
+close a declaration. Reading widely is not trusting widely.
+
+All of it is opt-in. A theme that declares no roles and carries no rules emits nothing for
+them and stamps nothing for them, which is why the eighteen shipped presets are untouched.
 
 **5. Keeping up.** An infinite feed appends a hundred cards as you scroll and a route
 change swaps the whole body without a navigation the browser knows about. A full walk of
@@ -501,8 +602,15 @@ fontFamily: 'Georgia; } * { background: url(https://evil.example/beacon) } .x {'
 // → null. The theme still applies; it just uses the page's own font.
 ```
 
-Raw CSS backdrops are honoured only from themes the extension ships. Theme names are
-escaped, never parsed, and reach the DOM as text. There are tests for each of these.
+No theme carries raw CSS at all. The gradient behind a glass theme used to be a CSS
+string, which is why it could only ever be honoured from a preset the extension shipped —
+one `url()` from a beacon on every page you themed, one `}` from writing its own rules
+into somebody else's site. It is stored as a base colour and a few positioned blobs now,
+and the engine writes the CSS from them, so a backdrop out of a stranger's file is exactly
+as safe as one of ours. A page's canvas must also be opaque: a see-through ground paints
+nothing, and leaves the contrast guarantee measuring text against a colour that was never
+there. Theme names are escaped, never parsed, and reach the DOM as text. There are tests
+for each of these.
 
 ---
 
@@ -536,17 +644,20 @@ src/
     computed.js, geometry.js, layout.js, model.js
   shared/
     theme-format.js         the file format, its validator, and the share codec
+    theme-dialects.js       the many spellings a theme file uses, read into the one shape
+    theme-rules.js          the rest of the file — components, states, selectors — as rules
     foreign-themes.js       reading a theme some other tool wrote
     website-theme.js        reading a theme off a website that never meant to ship one
     color.js                parsing, contrast, and the readability guarantee
     css-values.js           parsing, validating and formatting CSS values
+    css-text.js             CSS as text, in and out, through the same gate
   ui/
     panel.js, panel-css.js  the interface
     inspector.js            what the panel shows when something is selected
     controls.js             the control library the inspector is built from
   storage/                  chrome.storage behind a plain key/value interface
 
-test/        166 tests — format, library, engine, store, panel, identity, editor, journeys
+test/        331 tests — format, dialects, rules, engine, store, panel, identity, editor, journeys
 tools/       browser.mjs (a small CDP client) and verify.mjs (the real-browser checks)
 fixtures/    a page built the awkward way: custom properties, shadow roots, pushState
 attic/       the previous build, kept for reference; the editor above was rebuilt from it

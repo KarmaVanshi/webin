@@ -448,7 +448,8 @@ test('a hostile stylesheet gets no further than any other untrusted input', () =
 });
 
 test('an imported theme can never claim a raw CSS backdrop', () => {
-  // `effects.backdrop` is raw CSS and is honoured only for presets we ship.
+  // A backdrop is a base colour and a list of blobs. A string is not one, so a file that
+  // smuggles CSS in under the name gets nothing — the adapters cannot mint one either.
   const json = JSON.stringify({
     colors: { 'editor.background': '#000000', 'editor.foreground': '#ffffff' },
     effects: { backdrop: 'url(https://evil.example/x)' },
@@ -564,4 +565,64 @@ test('a name that is only noise keeps its own identity', () => {
   const { themes, error } = importAll(css, 'Odd');
   assert.equal(error, null);
   assert.equal(themes[0].palette.background, '#ffffff');
+});
+
+// ── JSON that belongs to no format at all ───────────────────────────────────
+// The files people actually have. A theme written by hand or by an assistant rarely
+// matches a published format: it invents its own vocabulary and nests it however reads
+// nicely, and every reader here would turn it away while the colours sat in plain sight.
+
+test('a JSON file full of colours is a theme, whatever it calls them', () => {
+  const { themes, source } = importAll(JSON.stringify({
+    theme: {
+      name: 'Whispering Forest',
+      mode: 'light',
+      colors: { canvas: '#F4EEDB', paper: '#FFFDF3', ink: '#39483B', mutedInk: '#71806D' },
+    },
+  }));
+
+  assert.equal(themes.length, 1);
+  assert.equal(source, 'json');
+  assert.equal(themes[0].name, 'Whispering Forest', 'the file named itself');
+  assert.equal(toHex(parseColor(themes[0].palette.background)), '#f4eedb', 'canvas is a ground');
+  assert.equal(toHex(parseColor(themes[0].palette.surface)), '#fffdf3', 'paper is a surface');
+  assert.equal(toHex(parseColor(themes[0].palette.text)), '#39483b', 'ink is ink');
+});
+
+test('a light theme does not take its colours from the file’s dark half', () => {
+  // A theme file routinely carries both. `special.nightMode.surface` is correctly named
+  // and completely real, and it belongs to the other theme — reading it is how a light
+  // theme comes out with dark panels.
+  const { themes } = importAll(JSON.stringify({
+    theme: {
+      mode: 'light',
+      colors: { canvas: '#F4EEDB', paper: '#FFFDF3', ink: '#39483B' },
+      special: { nightMode: { surface: 'rgba(31, 52, 49, 0.82)' } },
+    },
+  }));
+
+  const surface = parseColor(themes[0].palette.surface);
+  const ground = parseColor(themes[0].palette.background);
+  assert.ok(contrastRatio(surface, ground) < 2, 'a panel sits close to the page it is on');
+});
+
+test('a stray colour in an unrelated document is not a theme', () => {
+  assert.equal(importAll(JSON.stringify({ brandColor: '#ff0000', version: 3 })).themes.length, 0);
+});
+
+test('an unusable accent falls to the file’s other brand colour, not to its ink', () => {
+  // `#F6D98B` on `#F4EEDB` is a pale yellow on cream: correctly named, and invisible.
+  // Reaching past `primary` for the body text would make the whole theme monochrome.
+  const { themes } = importAll(JSON.stringify({
+    theme: {
+      colors: {
+        background: '#F4EEDB', text: '#39483B', surface: '#FFFDF3',
+        accent: '#F6D98B', primary: '#527A5B',
+      },
+    },
+  }));
+
+  const accent = themes[0].palette.accent;
+  assert.equal(toHex(parseColor(accent)), '#527a5b', 'the primary was right there');
+  assert.notEqual(toHex(parseColor(accent)), '#39483b', 'and it is not the body text');
 });

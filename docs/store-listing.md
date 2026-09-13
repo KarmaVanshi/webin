@@ -68,6 +68,11 @@ every control changes the page as you touch it. Drag the handles to resize, drag
 element to move it, double-click text to retype it, or hide it. Undo knows that a drag is
 one action rather than fifty. Save, and it is there again next visit.
 
+Two tools sit at the top of the panel. The pencil is the editor working: hover highlights,
+click selects, and every control changes the page. The arrow puts it down again — nothing
+is highlighted or selected and the site is yours to read and click through. Enter finishes
+what you were typing and puts the editor down.
+
 Nothing is written into the website. Your changes live in a stylesheet of Webin's own, and
 resetting removes every trace of them.
 

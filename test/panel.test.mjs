@@ -264,6 +264,57 @@ test('the inspector stays quiet when the contrast is fine', async () => {
   assert.equal(panel.shadow.querySelector('.webin-note--warn'), null);
 });
 
+test('edit mode offers the arrow, the pencil and the code tool, and says which is held', async () => {
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: { mode: 'design', tool: 'point', dirty: false, history: {}, unmatched: 0, selection: selectionDetail() },
+  });
+  const tools = [...panel.shadow.querySelectorAll('[data-action="tool"]')];
+  assert.deepEqual(tools.map((b) => b.dataset.value), ['point', 'edit', 'code']);
+  assert.deepEqual(tools.map((b) => b.getAttribute('aria-pressed')), ['true', 'false', 'false']);
+  // State is never carried by colour alone: each button is named, and the pressed one is
+  // filled as well as accented.
+  for (const button of tools) assert.ok(button.getAttribute('aria-label'));
+
+  panel.setState({ editor: { mode: 'design', tool: 'edit', dirty: false, history: {}, unmatched: 0, selection: selectionDetail() } });
+  const after = [...panel.shadow.querySelectorAll('[data-action="tool"]')];
+  assert.deepEqual(after.map((b) => b.getAttribute('aria-pressed')), ['false', 'true', 'false']);
+  assert.ok(after[1].classList.contains('is-on'));
+});
+
+test('with the arrow held the panel says the page is not being edited', async () => {
+  // The arrow clears the selection, so this is the only thing the inspector can show — and
+  // it has to say why it is empty rather than look like an editor that failed to load.
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: { mode: 'design', tool: 'point', dirty: false, history: {}, unmatched: 0, selection: null },
+  });
+  assert.equal(panel.shadow.querySelectorAll('[data-action="tool"]').length, 3);
+  assert.match(panel.shadow.querySelector('.webin-empty').textContent, /not editing/i);
+  assert.match(panel.shadow.querySelector('.webin-empty').textContent, /pencil/i);
+});
+
+test('the themes footer counts the edits, saved or not', async () => {
+  // "Untouched" is a claim about the page in front of you, not about storage: an edit you
+  // have not pressed Save on is still something you did.
+  const { panel } = await mountPanel({ editCount: 2 });
+  assert.match(panel.shadow.querySelector('.wb-foot-label').textContent, /2 edits here/);
+  assert.doesNotMatch(panel.shadow.querySelector('.wb-foot-label').textContent, /untouched/);
+
+  panel.setState({ editCount: 0, editor: { mode: 'design', tool: 'edit', history: {}, pending: 1, selection: null } });
+  assert.match(panel.shadow.querySelector('.wb-foot-label').textContent, /1 edit here/);
+
+  panel.setState({ editCount: 1 });
+  assert.match(panel.shadow.querySelector('.wb-foot-label').textContent, /2 edits here/, 'saved and pending are one number');
+});
+
+test('an applied theme still names itself, and says what else was done', async () => {
+  const { panel } = await mountPanel({ activeId: 'nord', editCount: 3 });
+  const label = panel.shadow.querySelector('.wb-foot-label').textContent;
+  assert.match(label, /Nord.*applied here/);
+  assert.match(label, /3 edits/);
+});
+
 test('with nothing selected the editor says what to do', async () => {
   const { panel } = await mountPanel({
     view: 'edit',
@@ -425,4 +476,327 @@ test('what the user is typing is never overwritten by a repaint', async () => {
 
   assert.equal(panel.shadow.querySelector('#wb-rename'), field);
   assert.equal(field.value, 'Half-typed nam', 'the half-finished name survived');
+});
+
+test('a colour swatch shows the colour it stands for', async () => {
+  // The swatch is an `input type=color`, which speaks `#rrggbb` and nothing else, and no
+  // caller was converting. So every swatch rendered black whatever colour it stood for —
+  // a white background showed a black square — and a repaint then wrote that black back
+  // over the colour being dragged to, which took the page with it.
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: {
+      mode: 'design', dirty: false, history: {}, unmatched: 0,
+      selection: selectionDetail({
+        typography: { fontSize: '16px', fontWeight: '600', lineHeight: '24px', letterSpacing: '0px', textAlign: 'left', color: 'rgb(29, 29, 31)' },
+        appearance: {
+          backgroundColor: '#ffffff', opacity: '1', borderColor: 'rgb(200, 0, 0)',
+          borderWidth: { top: '1px', right: '1px', bottom: '1px', left: '1px' },
+          radius: { topLeft: '8px', topRight: '8px', bottomRight: '8px', bottomLeft: '8px' },
+        },
+      }),
+    },
+  });
+  const swatch = (prop) => panel.shadow.querySelector(`[data-control="color"][data-prop="${prop}"]`).getAttribute('value');
+
+  assert.equal(swatch('background-color'), '#ffffff', 'white is not black');
+  assert.equal(swatch('color'), '#1d1d1f', 'and rgb() reaches the picker as hex');
+  assert.equal(swatch('border-color'), '#c80000');
+});
+
+test('a colour the panel is already showing is not written over', async () => {
+  // The picker is attached to this node and may be open on it. Writing a value it already
+  // holds looks like nothing and is a real event to the picker mid-drag.
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: { mode: 'design', dirty: false, history: {}, unmatched: 0, selection: selectionDetail() },
+  });
+  const swatch = panel.shadow.querySelector('[data-control="color"][data-prop="background-color"]');
+  const writes = [];
+  Object.defineProperty(swatch, 'value', {
+    get: () => '#8a8a8a',
+    set: (v) => writes.push(v),
+    configurable: true,
+  });
+
+  panel.setState({
+    editor: { mode: 'design', dirty: true, history: {}, unmatched: 0, selection: selectionDetail() },
+  });
+
+  assert.deepEqual(writes, [], 'the swatch was left alone');
+});
+
+test('the background row offers an image as well as a colour', async () => {
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: { mode: 'design', dirty: false, history: {}, unmatched: 0, selection: selectionDetail() },
+  });
+
+  const row = panel.shadow.querySelector('[data-row="background-color"]');
+  assert.ok(row, 'the background row is there');
+
+  const add = row.querySelector('[data-control="image"]');
+  assert.ok(add, 'and carries the button that opens the picker');
+  assert.ok(add.getAttribute('aria-label')?.includes('image'), 'named, like every other icon button');
+
+  // After the value, before the revert: what it is, another way to fill it, the way back.
+  const order = [...row.querySelectorAll('input, button')].map((el) => el.dataset.control ?? el.dataset.action);
+  assert.deepEqual(order, ['color', 'color-text', 'image', 'revert-prop']);
+});
+
+test('the image picker takes the formats a phone and a designer produce', async () => {
+  const { panel } = await mountPanel();
+  const picker = panel.shadow.querySelector('input[data-picker="image"]');
+  assert.ok(picker, 'a picker of its own, separate from the theme importer');
+
+  for (const kind of ['.png', '.jpg', '.jpeg', '.heic', '.svg']) {
+    assert.ok(picker.accept.includes(kind), `${kind} is accepted`);
+  }
+  assert.ok(picker.hidden, 'opened by the button rather than shown');
+  assert.ok(picker.getAttribute('aria-label'), 'and still named');
+});
+
+test('the theme importer and the image picker do not open each other', async () => {
+  const { panel } = await mountPanel();
+  const opened = [];
+  for (const input of panel.shadow.querySelectorAll('input[type="file"]')) {
+    input.addEventListener('click', () => opened.push(input.dataset.picker ?? 'theme'));
+  }
+
+  panel.pickFile();
+  assert.deepEqual(opened, ['theme'], 'importing a theme opens the theme picker');
+
+  panel.pickImage();
+  assert.deepEqual(opened, ['theme', 'image'], 'and the + opens the image one');
+});
+
+test('the code tool shows both scopes, and the apply button carries what was typed', async () => {
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: {
+      mode: 'design', tool: 'code', dirty: false, history: {}, unmatched: 0,
+      siteRules: 0, elementCss: 'color: red;', siteCss: '',
+      selection: selectionDetail(),
+    },
+  });
+
+  const element = panel.shadow.querySelector('[data-code="element"]');
+  const site = panel.shadow.querySelector('[data-code="site"]');
+  assert.ok(element && site, 'both panes are on screen at once');
+  assert.equal(element.value, 'color: red;', 'the selection’s own declarations are shown');
+
+  // The pane carries its value in the DOM, so the button has to go and fetch it at the
+  // moment of the press — what is in the box until then is a draft.
+  site.value = '.card { padding: 8px }';
+  const seen = [];
+  panel.on('action', (payload) => seen.push(payload));
+  panel.shadow.querySelector('[data-action="apply-site-css"]').click();
+
+  assert.deepEqual(seen, [{ action: 'apply-site-css', value: '.card { padding: 8px }' }]);
+});
+
+test('what could not be written is named under the box it was typed in', async () => {
+  // Never a toast: a message about the third line of what you wrote has to stay on screen
+  // next to the third line of what you wrote.
+  const { panel } = await mountPanel({
+    view: 'edit',
+    codeErrors: { site: ['"[data-webin]" is not a selector the editor will write.'] },
+    editor: {
+      mode: 'design', tool: 'code', dirty: false, history: {}, unmatched: 0,
+      siteRules: 1, elementCss: '', siteCss: '', selection: null,
+    },
+  });
+
+  assert.match(panel.shadow.querySelector('.webin-code-notes').textContent, /not a selector/);
+});
+
+test('with nothing selected the code tool still offers the site sheet', async () => {
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: {
+      mode: 'design', tool: 'code', dirty: false, history: {}, unmatched: 0,
+      siteRules: 0, elementCss: '', siteCss: '', selection: null,
+    },
+  });
+
+  assert.equal(panel.shadow.querySelector('[data-code="element"]'), null);
+  assert.ok(panel.shadow.querySelector('[data-code="site"]'), 'a selector needs no selection');
+  assert.match(panel.shadow.querySelector('.webin-code-empty').textContent, /Click something/);
+});
+
+test('the selection head steps both ways through the tree', async () => {
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: {
+      mode: 'design', dirty: false, history: {}, unmatched: 0,
+      selection: selectionDetail({ canSelectParent: true, canSelectChild: true }),
+    },
+  });
+
+  const seen = [];
+  panel.on('action', (payload) => seen.push(payload));
+  panel.shadow.querySelector('[data-action="select-parent"]').click();
+  panel.shadow.querySelector('[data-action="select-child"]').click();
+
+  assert.deepEqual(seen.map((a) => a.action), ['select-parent', 'select-child']);
+});
+
+test('a step with nowhere to go is offered but not live', async () => {
+  // A leaf element still shows the button — the row must not shuffle sideways as the
+  // selection moves — but pressing it would do nothing, so it says so.
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: {
+      mode: 'design', dirty: false, history: {}, unmatched: 0,
+      selection: selectionDetail({ canSelectParent: true, canSelectChild: false }),
+    },
+  });
+
+  const parent = panel.shadow.querySelector('[data-action="select-parent"]');
+  const child = panel.shadow.querySelector('[data-action="select-child"]');
+  assert.equal(parent.hasAttribute('disabled'), false);
+  assert.equal(child.hasAttribute('disabled'), true);
+});
+
+test('the selection head steps sideways too, and says when a side is empty', async () => {
+  // Up and down alone leave every sibling but the first unreachable — the second card in a
+  // row was a climb up and a guess back down. Two more buttons, same row, same rules: drawn
+  // whether or not there is somewhere to go, and not live when there is not.
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: {
+      mode: 'design', dirty: false, history: {}, unmatched: 0,
+      selection: selectionDetail({ canSelectPrevious: false, canSelectNext: true }),
+    },
+  });
+
+  const seen = [];
+  panel.on('action', (payload) => seen.push(payload));
+  const previous = panel.shadow.querySelector('[data-action="select-previous"]');
+  const next = panel.shadow.querySelector('[data-action="select-next"]');
+  assert.equal(previous.hasAttribute('disabled'), true);
+  assert.equal(next.hasAttribute('disabled'), false);
+  next.click();
+  assert.deepEqual(seen.map((a) => a.action), ['select-next']);
+});
+
+test('the inspector lists the CSS the site applies, as the page names the element', async () => {
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: {
+      mode: 'design', dirty: false, history: {}, unmatched: 0,
+      selection: selectionDetail({
+        styles: {
+          target: 'button#cta.buy.large',
+          inline: [{ property: 'color', value: 'red', important: false, overridden: false }],
+          rules: [
+            { selector: '.buy', source: 'site.css', media: null, declarations: [
+              { property: 'padding', value: '10px 18px', important: false, overridden: false },
+              { property: 'color', value: 'blue', important: false, overridden: true },
+            ] },
+            { selector: 'button', source: '<style>', media: '(max-width: 600px)', declarations: [
+              { property: 'padding', value: '4px', important: false, overridden: true },
+            ] },
+          ],
+          blocked: 0,
+        },
+      }),
+    },
+  });
+
+  const sh = panel.shadow;
+  assert.equal(sh.querySelector('.webin-styles-target').textContent, 'button#cta.buy.large');
+  const rules = [...sh.querySelectorAll('.webin-rule .webin-rule-sel')].map((n) => n.textContent);
+  assert.deepEqual(rules, ['element.style', '.buy', 'button'], 'inline first, then the rules, most powerful first');
+  const struck = [...sh.querySelectorAll('.webin-decl.is-overridden')].map((n) => n.textContent.replace(/\s+/g, ' ').trim());
+  assert.deepEqual(struck, ['color: blue;', 'padding: 4px;'], 'what a stronger rule beat is struck through');
+  assert.match(sh.querySelector('.webin-rule-media').textContent, /max-width/);
+  assert.match(sh.querySelector('[data-section="styles"] .webin-section-toggle').textContent, /Styles · 3/);
+});
+
+test('a code pane keeps its draft across a repaint, and drops it once applied', async () => {
+  const detail = selectionDetail({ id: 'el1' });
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: {
+      mode: 'design', tool: 'code', dirty: false, history: {}, unmatched: 0,
+      siteRules: 0, elementCss: '', siteCss: '', selection: detail,
+    },
+  });
+  const sh = panel.shadow;
+  const site = sh.querySelector('[data-code="site"]');
+  site.value = 'footer { color: red }';
+  site.dispatchEvent(new panel.shadow.ownerDocument.defaultView.Event('input', { bubbles: true }));
+
+  // The caret leaves the box and the panel repaints — the way clicking the page to look at
+  // another element does. What was typed is still there.
+  panel.setState({ editor: { ...panel.state.editor, siteRules: 0, selection: selectionDetail({ id: 'el2' }) } });
+  assert.equal(sh.querySelector('[data-code="site"]').value, 'footer { color: red }');
+
+  const seen = [];
+  panel.on('action', (payload) => seen.push(payload));
+  sh.querySelector('[data-action="apply-site-css"]').click();
+  assert.deepEqual(seen, [{ action: 'apply-site-css', value: 'footer { color: red }' }]);
+
+  // Applied, the runtime hands back the canonical text, and that is what shows now.
+  panel.setState({ editor: { ...panel.state.editor, siteRules: 1, siteCss: 'footer { color: red }' } });
+  assert.equal(sh.querySelector('[data-code="site"]').value, 'footer { color: red }');
+});
+
+test('an element draft belongs to the element it was written for', async () => {
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: {
+      mode: 'design', tool: 'code', dirty: false, history: {}, unmatched: 0,
+      siteRules: 0, elementCss: 'color: red;', siteCss: '', selection: selectionDetail({ id: 'el1' }),
+    },
+  });
+  const sh = panel.shadow;
+  const Event = panel.shadow.ownerDocument.defaultView.Event;
+  const area = sh.querySelector('[data-code="element"]');
+  area.value = 'color: red;\npadding: 4px;';
+  area.dispatchEvent(new Event('input', { bubbles: true }));
+
+  panel.setState({ editor: { ...panel.state.editor, elementCss: '', selection: selectionDetail({ id: 'el2', label: 'h2' }) } });
+  assert.equal(sh.querySelector('[data-code="element"]').value, '', 'another element, another box');
+});
+
+test('Tab indents inside a code pane, Escape only leaves the box, and the result is said in the pane', async () => {
+  const { panel } = await mountPanel({
+    view: 'edit',
+    codeStatus: { site: '2 rules live' },
+    editor: {
+      mode: 'design', tool: 'code', dirty: false, history: {}, unmatched: 0,
+      siteRules: 2, elementCss: '', siteCss: '', selection: null,
+    },
+  });
+  const sh = panel.shadow;
+  const win = panel.shadow.ownerDocument.defaultView;
+  const area = sh.querySelector('[data-code="site"]');
+  area.value = 'a {\n}';
+  area.focus();
+  area.setSelectionRange(4, 4);
+  area.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  assert.equal(area.value, 'a {\n  }', 'two spaces in, and the field kept the focus');
+
+  const seen = [];
+  panel.on('action', (payload) => seen.push(payload));
+  area.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  assert.deepEqual(seen, [], 'Escape in the box is not a way out of Edit mode');
+  assert.equal(panel.state.view, 'edit');
+
+  assert.equal(sh.querySelector('.webin-code-status').textContent, '2 rules live', 'said beside the box, not in a toast over the button');
+  assert.equal(sh.querySelector('.wb-toast'), null);
+});
+
+test('Escape on the panel in Edit mode asks the runtime to leave it, so the editor lets go', async () => {
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: { mode: 'design', tool: 'edit', dirty: false, history: {}, unmatched: 0, selection: null },
+  });
+  const seen = [];
+  panel.on('action', (payload) => seen.push(payload));
+  const win = panel.shadow.ownerDocument.defaultView;
+  panel.shadow.querySelector('.wb-panel').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  assert.deepEqual(seen, [{ action: 'mode', value: 'gallery' }]);
 });

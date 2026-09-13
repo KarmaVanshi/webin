@@ -20,7 +20,7 @@
  *      their back is not.
  */
 
-import { parseColor, toCss, luminance, contrastRatio, flatten, isTransparent } from './color.js';
+import { parseColor, toCss, luminance, contrastRatio, flatten, isTransparent, rgbToHsl } from './color.js';
 import { looksLikeHtml, readHtml, themeFromWebsite } from './website-theme.js';
 
 /** Roles a theme needs, in the order the adapters try to fill them. */
@@ -50,7 +50,7 @@ const ROLE_NAMES = {
     'surface-0', 'editor-background', 'b1',
   ],
   surface: [
-    'card', 'popover', 'panel', 'surface', 'base-200', 'base200', 'elevated', 'muted',
+    'card', 'popover', 'panel', 'paper', 'sheet', 'surface', 'base-200', 'base200', 'elevated', 'muted',
     'secondary', 'surface-1', 'sidebar-background', 'b2',
   ],
   text: [
@@ -298,6 +298,64 @@ function sniffJson(json) {
   if (Array.isArray(json.schemes) || (json.background && json.foreground && json.black)) return 'terminal';
   if (hasDesignTokens(json)) return 'dtcg';
   if (Object.keys(json).some((k) => k.startsWith('--'))) return 'css-vars';
+
+  // Last: a file that is simply full of colours, under whatever names its author liked.
+  // Hand-written and generated theme files rarely match a published format — they invent
+  // a vocabulary (`canvas`, `paper`, `ink`, `blossom`) and nest it however reads nicely.
+  // There is still a theme in there, and the role matcher already knows most of those
+  // words, so the shape is worth reading rather than refusing.
+  if (looseColours(json).length >= MIN_LOOSE_COLOURS) return 'json';
+  return null;
+}
+
+/** Enough colours to be a palette rather than a stray hex in some unrelated document. */
+const MIN_LOOSE_COLOURS = 3;
+
+/**
+ * Every leaf anywhere in a JSON file whose value parses as a colour, named by its path.
+ *
+ * Named by the whole path rather than the leaf key because the role matcher reads names
+ * from the tail inwards: `theme-colors-canvas` still answers to `canvas`, while
+ * `surfaces-card-background` stays distinguishable from the page's own background.
+ *
+ * `parseColor` is the test for whether a leaf counts, which is the honest one — a string
+ * is a colour exactly when the thing that has to render it can read it.
+ */
+function looseColours(node, path = [], out = [], skip = null) {
+  if (!node || typeof node !== 'object' || path.length > 8) return out;
+  for (const [key, child] of Object.entries(node)) {
+    if (skip?.test(key.replace(/[-_\s]/g, ''))) continue;
+    if (typeof child === 'string') {
+      if (parseColor(child)) out.push([[...path, key].join('-'), child]);
+    } else if (child && typeof child === 'object') {
+      looseColours(child, [...path, key], out, skip);
+    }
+  }
+  return out;
+}
+
+/** Branches belonging to the mode this file is not, given the mode it says it is. */
+const OTHER_MODE = {
+  light: /^(night|dark)(mode|theme)?$/i,
+  dark: /^(day|light)(mode|theme)?$/i,
+};
+
+/**
+ * Which of the two a file says it is, or null when it does not say.
+ *
+ * Worth asking because a theme file routinely carries both, and a loose walk has no other
+ * way to tell that `special.nightMode.surface` is not this theme's surface. Reading it as
+ * one is how a light theme comes out with dark panels — the colour is real, correctly
+ * named, and belongs to the other half of the file.
+ */
+function declaredMode(json) {
+  const said = json?.mode ?? json?.theme?.mode ?? json?.appearance ?? json?.theme?.appearance;
+  if (typeof said === 'string') {
+    const word = said.trim().toLowerCase();
+    if (word === 'light' || word === 'dark') return word;
+  }
+  const dark = json?.dark ?? json?.theme?.dark;
+  if (typeof dark === 'boolean') return dark ? 'dark' : 'light';
   return null;
 }
 
@@ -473,12 +531,41 @@ function inferRoles(pairs) {
  * colours and none of the seven things asked for here by those names. Anything derived
  * rather than read is reported, so the preview can say so.
  */
-function completePalette(palette, inferred) {
+export function completePalette(palette, inferred, { prefersDark = null, spare = [] } = {}) {
   const has = (key) => typeof palette[key] === 'string';
   const note = (key, why) => { inferred.push(`${key} ← ${why}`); };
 
-  if (!has('background') && has('surface')) { palette.background = palette.surface; note('background', 'surface'); }
+  // A surface can stand in for a missing canvas, but only a solid one. The raised plane
+  // of a glass theme is a sheet of near-transparent white; promoting that to the page's
+  // ground gives a canvas that paints nothing and reads as blinding white to every
+  // contrast check downstream.
+  if (!has('background') && has('surface') && (parseColor(palette.surface)?.a ?? 0) >= 0.9) {
+    palette.background = palette.surface;
+    note('background', 'surface');
+  }
   if (!has('surface') && has('background')) { palette.surface = palette.background; note('surface', 'background'); }
+
+  // A glass theme's ground.
+  //
+  // A file that writes `background: transparent` has not failed to name its canvas; it has
+  // said the canvas is not its own — something behind is meant to provide it. Where that
+  // something is a backdrop the base supplies the ground, and where there is no backdrop
+  // there is still enough on the page to work one out: light ink means a dark page, and
+  // the accent says which dark. Refusing the file instead was pedantry — it named its ink,
+  // its panels and its brand colour, and every one of those points the same way.
+  //
+  // One colour is still not a theme, so this needs the text *and* something else to stand
+  // on. A palette holding nothing but a text colour has no page to put the text on, and
+  // saying so remains the right answer.
+  const supporting = ['surface', 'accent', 'border', 'textMuted', 'onAccent'].filter(has);
+  if (!has('background') && has('text') && supporting.length) {
+    const wantsDark = prefersDark ?? (luminance(parseColor(palette.text)) > 0.5);
+    palette.background = groundFor(has('accent') ? parseColor(palette.accent) : null, wantsDark);
+    note('background', wantsDark
+      ? 'a dark ground, since the text is light and the theme names no canvas'
+      : 'a light ground, since the text is dark and the theme names no canvas');
+  }
+
   if (!has('background') || !has('text')) return null;
 
   const dark = luminance(parseColor(palette.background)) < 0.35;
@@ -486,6 +573,16 @@ function completePalette(palette, inferred) {
   // Last line of defence: an accent that vanishes into the page is not one, however it
   // was arrived at.
   if (has('accent') && !roleUsable('accent', palette.accent, palette)) delete palette.accent;
+
+  // Before giving up: a file whose named accent was unusable often names another brand
+  // colour that is perfectly usable. A theme file listing `accent: #F6D98B` — a pale
+  // yellow that disappears on cream — alongside `primary: #527A5B` has a brand colour;
+  // reaching past both of them for the body text makes the whole theme monochrome, which
+  // is a worse reading of the file than either colour would have been.
+  if (!has('accent') && spare.length) {
+    const rescued = pickAccent(spare, palette);
+    if (rescued) { palette.accent = rescued.colour; note('accent', rescued.why); }
+  }
   if (!has('accent')) { palette.accent = palette.text; note('accent', 'text, for want of a brand colour'); }
   if (!has('textMuted')) {
     // Halfway between the text and its background is what a caption is, near enough.
@@ -504,6 +601,22 @@ function completePalette(palette, inferred) {
     note('onAccent', 'whichever of black or white reads on the accent');
   }
   return { palette, dark };
+}
+
+/**
+ * A canvas for a theme that named none: the accent's own hue, taken to one end or the
+ * other of the lightness range.
+ *
+ * Tinted rather than neutral because a grey ground under a blue theme looks like a
+ * mistake, and because the accent is the one colour such a file always has. The saturation
+ * is held well down — this is a page, not a poster.
+ */
+function groundFor(accent, dark) {
+  if (!accent) return dark ? '#101216' : '#fafafa';
+  const { h, s } = rgbToHsl(accent);
+  const hsl = `hsl(${Math.round(h)}, ${Math.round(Math.min(s, 0.45) * 100)}%, ${dark ? 7 : 97}%)`;
+  const parsed = parseColor(hsl);
+  return parsed ? toCss(parsed) : (dark ? '#101216' : '#fafafa');
 }
 
 /** Linear blend, `t` of the way from `a` to `b`. */
@@ -794,6 +907,101 @@ function fromDesignTokens(json, name) {
   return candidate ? { source: 'dtcg', themes: [candidate], inferred } : null;
 }
 
+/**
+ * An accent out of the colours a file named but we had no role for.
+ *
+ * Names first, in the order `ROLE_NAMES.accent` lists them, so a file that says `primary`
+ * gets its primary rather than whatever happens to be most saturated. Only when nothing is
+ * recognisably named does it come down to looking at the colours themselves.
+ *
+ * @param {Array<[string, string]>} spare `[name, colour]` pairs left over
+ * @returns {{colour:string, why:string}|null}
+ */
+function pickAccent(spare, palette) {
+  const byTail = new Map();
+  for (const [rawName, value] of spare) {
+    const name = normaliseName(rawName);
+    if (namesAState(name)) continue;
+    const segments = withoutVariant(name).split('-').filter(Boolean);
+    const tail = segments[segments.length - 1];
+    if (tail && !byTail.has(tail)) byTail.set(tail, value);
+  }
+
+  for (const candidate of ROLE_NAMES.accent) {
+    const value = byTail.get(candidate);
+    if (value && roleUsable('accent', value, palette)) {
+      return { colour: value, why: `--${candidate}, the accent the file named being unusable` };
+    }
+  }
+
+  const colourful = mostColourful(spare, palette.background);
+  return colourful ? { colour: colourful, why: 'the most colourful thing in the file' } : null;
+}
+
+/**
+ * The most saturated colour in the file that would read against the page.
+ *
+ * State colours are skipped by name: a danger red is the most colourful thing in plenty of
+ * files and is never the brand. Near-greys are skipped because a theme whose accent is
+ * grey has no accent, and anything that fails a 3:1 contrast against the ground is skipped
+ * because an accent is for links and fills, which have to be seen.
+ */
+function mostColourful(pairs, background) {
+  const ground = parseColor(background);
+  if (!ground) return null;
+
+  let best = null;
+  for (const [rawName, value] of pairs) {
+    if (rawName.toLowerCase().split('-').some((segment) => STATE_SEGMENT.has(segment))) continue;
+    const colour = parseColor(value);
+    if (!colour || colour.a < 0.9) continue;
+    const { s } = rgbToHsl(colour);
+    if (s < 0.2) continue;
+    if (contrastRatio(colour, ground) < 3) continue;
+    if (!best || s > best.saturation) best = { saturation: s, value };
+  }
+  return best?.value ?? null;
+}
+
+/**
+ * A theme out of a JSON file that belongs to no format at all.
+ *
+ * The same three steps as every other reader — gather `[name, colour]` pairs, match them
+ * to roles, complete what is missing — differing only in how loosely the pairs are found.
+ */
+function fromLooseJson(json, name) {
+  const pairs = looseColours(json, [], [], OTHER_MODE[declaredMode(json)] ?? null);
+  if (pairs.length < MIN_LOOSE_COLOURS) return null;
+  const roles = inferRoles(pairs);
+  const inferred = [...roles.inferred];
+
+  // A file that names a dozen colours has a brand colour somewhere among them, whatever it
+  // called them. Without this the fallback makes the accent the body text, and a theme
+  // built out of forest, moss, blossom and sky comes out monochrome — which is not a
+  // cautious reading of the file so much as a wrong one.
+  if (!roles.palette.accent && roles.palette.background) {
+    const guess = mostColourful(pairs, roles.palette.background);
+    if (guess) {
+      roles.palette.accent = guess;
+      inferred.push('accent ← the most colourful thing in the file, none being named as one');
+    }
+  }
+  const titled = json?.name ?? json?.theme?.name;
+  const candidate = candidateFrom({
+    palette: roles.palette,
+    inferred,
+    name: typeof titled === 'string' && titled.trim() ? titled : name,
+  });
+  if (!candidate) return null;
+
+  // The file's own blocks are carried through underneath the candidate, so the reader that
+  // knows how to translate them still gets to see them. Without this a file rescued by its
+  // colours arrives with nothing else: no radius, no fonts, no materials, no gradient —
+  // everything it said about how it should look, discarded on the way in.
+  const inner = json?.theme && typeof json.theme === 'object' ? json.theme : json;
+  return { source: 'json', themes: [{ ...inner, ...candidate }], inferred };
+}
+
 // ─── Entry point ────────────────────────────────────────────────────────────
 
 /**
@@ -819,6 +1027,7 @@ export function adaptForeignThemes(text, { name = 'Imported theme', themeColor =
     case 'terminal': return fromTerminal(json, name);
     case 'dtcg': return fromDesignTokens(json, name);
     case 'css-vars': return readStyles(json ?? raw, name, themeColor);
+    case 'json': return fromLooseJson(json, name);
     case 'stylesheet': return themeFromWebsite(raw, { name, themeColor });
     case 'html': return fromHtml(raw, name, themeColor);
     default: return null;

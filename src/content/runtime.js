@@ -25,6 +25,20 @@ import { EditStore } from '../storage/edits.js';
 import { Editor } from '../editor/editor.js';
 import { ensureReadable } from '../shared/color.js';
 import { EditMode } from '../shared/types.js';
+import { backgroundFit } from '../shared/image.js';
+
+/**
+ * Properties a single inspector row is responsible for, beyond its own name.
+ *
+ * `background-color` is the only one so far: the `+` beside it writes four declarations,
+ * and its revert has to take all four back.
+ */
+const REVERT_FAMILY = Object.freeze({
+  'background-color': [
+    'background-image', 'background-size', 'background-position',
+    'background-repeat', 'background-attachment',
+  ],
+});
 
 /**
  * Sites that render after the first paint need a second look. Two passes cover every
@@ -247,21 +261,34 @@ export class Webin {
     const theme = await this.#findTheme(id);
     if (!theme) { this.#panel.toast('error', 'That theme is no longer available.'); return; }
 
-    const result = this.#applyNow(theme);
+    this.#applyNow(theme);
     await this.#store.setSite(this.#host, theme.id, this.#engine.rootCss);
     this.#broadcast();
     this.#panel.setState({ activeId: theme.id, view: 'gallery', menuOpen: false });
-    this.#panel.toast('info', `${theme.name} applied — ${result.rules} rules, ${result.variables} variables remapped.`);
+    // What the user wants to know is that the thing they clicked took effect. The rule and
+    // variable counts were a report on the engine, not an answer to that.
+    this.#panel.toast('info', `${theme.name} applied`);
   }
 
+  /**
+   * Removes the theme, and only the theme.
+   *
+   * A theme and a hand edit are two different kinds of change, and which one you want gone
+   * is a decision only the user can make — so each has its own control on the tab it
+   * belongs to: the theme goes from Themes, the edits go from Edit. Briefly this button
+   * took both, which read as tidy and was actually the panel choosing for them.
+   */
   async #clearTheme() {
     this.#monitor.suspend(() => this.#engine.clear());
     this.#removeBoot();
     this.#active = null;
     await this.#store.clearSite(this.#host);
     this.#broadcast();
-    this.#panel.setState({ activeId: null, menuOpen: false });
-    this.#panel.toast('info', `${this.#host} is back to normal.`);
+    await this.#refresh({ activeId: null, menuOpen: false });
+    const edits = this.#panel.state.editCount ?? 0;
+    this.#panel.toast('info', edits
+      ? `Theme removed. Your ${edits} change${edits === 1 ? '' : 's'} are still applied.`
+      : `${this.#host} is back to normal.`);
   }
 
   /**
@@ -325,7 +352,11 @@ export class Webin {
       case 'appearance': return this.#toggleAppearance();
       case 'readable': return this.#toggleReadable();
       case 'mode': return this.#setMode(value);
+      case 'tool': return this.#setTool(value);
       case 'select-parent': return this.#withEditor((e) => e.selectParent());
+      case 'select-child': return this.#withEditor((e) => e.selectChild());
+      case 'select-previous': return this.#withEditor((e) => e.selectSibling(-1));
+      case 'select-next': return this.#withEditor((e) => e.selectSibling(1));
       case 'hide': return this.#withEditor((e) => e.hide());
       case 'unhide': return this.#withEditor((e) => e.unhide());
       case 'remove': return this.#withEditor((e) => e.remove());
@@ -336,12 +367,16 @@ export class Webin {
       case 'show-unmatched': return this.#remapNext();
       case 'toggle-section': return this.#toggleSection(value);
       case 'save': return this.#saveEdits();
+      case 'revert-prop': return this.#revertProperty(value);
       case 'reset-element': return this.#resetEdits('element');
       case 'reset-page': return this.#resetEdits('page');
       case 'reset-site': return this.#resetEdits('site');
       case 'capture': return this.#capture();
       case 'open-import': return this.#panel.setState({ view: 'import', menuOpen: false });
       case 'import-file': return this.#panel.pickFile();
+      case 'background-image': return this.#setBackgroundImage(value);
+      case 'apply-element-css': return this.#applyCss('element', value);
+      case 'apply-site-css': return this.#applyCss('site', value);
       case 'import-text': return this.#import(this.#panel.importText);
       case 'import-url': return this.#importFromUrl(this.#panel.importUrl);
       case 'confirm-import': return this.#confirmImport();
@@ -411,6 +446,54 @@ export class Webin {
   }
 
   /**
+   * Picks up the arrow or the pencil.
+   *
+   * Only meaningful inside Edit mode, which is the only place the switch is drawn, so an
+   * absent editor here means a stale click and nothing to do.
+   */
+  /**
+   * Applies one of the two written-CSS panes.
+   *
+   * Whatever parses is applied and whatever does not is listed under the box it came from,
+   * rather than announced in a toast that disappears — a message about the third line of
+   * what you typed needs to stay on screen next to the third line of what you typed.
+   */
+  #applyCss(scope, css) {
+    this.#withEditor((editor) => {
+      const result = scope === 'site' ? editor.applySiteCss(css) : editor.applyElementCss(css);
+      const errors = result.errors ?? [];
+
+      // Said in the pane's own header, not in a toast. A toast lands on the button that
+      // was just pressed and hides it for three seconds, so the second press hit the
+      // toast and did nothing — which read as the apply button being broken.
+      let status;
+      if (scope === 'site') {
+        status = errors.length
+          ? `${result.rules} rule${result.rules === 1 ? '' : 's'} applied, ${errors.length} refused`
+          : `${result.rules} rule${result.rules === 1 ? '' : 's'} live`;
+      } else if (!result.ok) {
+        status = errors[0] ?? 'Nothing is selected';
+      } else {
+        const changed = result.applied + result.removed;
+        status = errors.length
+          ? `${changed} applied, ${errors.length} refused`
+          : `${changed} declaration${changed === 1 ? '' : 's'} applied`;
+      }
+
+      this.#panel.setState({
+        editor: this.#editorState(),
+        codeErrors: { ...(this.#panel.state.codeErrors ?? {}), [scope]: errors },
+        codeStatus: { ...(this.#panel.state.codeStatus ?? {}), [scope]: status },
+      });
+    });
+  }
+
+  #setTool(value) {
+    this.#withEditor((editor) => editor.setTool(value));
+    if (this.#panel.state.view === 'edit') this.#panel.setState({ editor: this.#editorState() });
+  }
+
+  /**
    * Turns a control event into a style change.
    *
    * The panel reports what the user touched; deciding what that means in CSS is this
@@ -446,6 +529,9 @@ export class Webin {
         return this.#setBox(prop, side, value, sides);
       case 'link':
         return this.#toggleLink(prop);
+      case 'image':
+        // The picker is modal and asynchronous; what comes back arrives as an action.
+        return this.#panel.pickImage();
       default:
         return undefined;
     }
@@ -518,6 +604,66 @@ export class Webin {
     this.#panel.toast('info', saved
       ? `Saved ${saved} change${saved === 1 ? '' : 's'} for ${scope === '*' ? this.#host : scope}.`
       : 'Nothing to save.');
+  }
+
+  /**
+   * Puts one property back to whatever the site itself says.
+   *
+   * Undo steps back a gesture at a time, which is the wrong tool for "none of this": after
+   * a few adjustments the site's own value is several presses away and nobody is counting
+   * them. A shorthand takes its longhands with it, so reverting Padding reverts the side
+   * that was set on its own too.
+   */
+  #revertProperty(prop) {
+    const detail = this.#editor?.state().selection;
+    if (!detail || !prop) return;
+    // One row in the inspector, so one thing to undo. The background row can hold a colour
+    // or a picture, and a revert that took the colour away and left the image behind would
+    // be a revert that did not revert.
+    const family = REVERT_FAMILY[prop] ?? [];
+    const properties = Object.keys(detail.overrides ?? {})
+      .filter((key) => key === prop || key.startsWith(`${prop}-`) || family.includes(key));
+    if (!properties.length) return;
+    this.#editor.clearProperties(properties);
+    this.#panel.toast('info', `${prop} is back to the site's own value.`);
+  }
+
+  /**
+   * Puts a picked image behind the selected element, sized to fit it.
+   *
+   * Several declarations rather than one. `background-image` alone would tile a photo at
+   * its natural size across the box, which is almost never what somebody choosing a
+   * background meant. How it should be sized is not a constant either — see
+   * `backgroundFit`, which is given the picture's shape and the box's and decides between
+   * filling the box and showing the whole picture. The colour underneath is left exactly
+   * as it was, so it still shows through a transparent PNG and still shows if the image
+   * ever fails to paint.
+   */
+  #setBackgroundImage(image) {
+    const url = typeof image === 'string' ? image : image?.url;
+    if (!url) return;
+    this.#ensureEditor();
+    const detail = this.#editor?.state().selection;
+    if (!detail) {
+      this.#panel.toast('error', 'Select something first, then choose an image for it.');
+      return;
+    }
+
+    // `tag` is lowercase here, as the model reports it.
+    const page = detail.tag === 'body' || detail.tag === 'html';
+    const fit = backgroundFit(typeof image === 'string' ? {} : image, detail.layout, {
+      page,
+      viewport: detail.geometry?.viewport ?? null,
+    });
+    this.#editor.setProperties({ 'background-image': `url("${url}")`, ...fit }, 'background image');
+
+    // Which way it was sized is worth saying: it is a judgement about the picture, and the
+    // person who just chose it is the one who can tell whether it was the right one.
+    this.#panel.toast('info', page
+      ? 'Image set as the page background, filling the screen.'
+      : fit['background-size'] === 'contain'
+        ? 'Image set as the background, sized to fit whole.'
+        : 'Image set as the background, filling the box.');
   }
 
   async #resetEdits(scale) {

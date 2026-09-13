@@ -233,7 +233,7 @@ export class OverrideStylesheet {
 }
 
 /**
- * The attribute is repeated on purpose.
+ * The attribute is repeated on purpose, and an id nobody has is named after it.
  *
  * `[data-webin-id="w4"]` is specificity (0,1,0) — exactly what the theme engine's own
  * rules score, and the theme lives in an adopted stylesheet, which the cascade places
@@ -241,9 +241,14 @@ export class OverrideStylesheet {
  * a colour the user picked by hand would be silently overruled by the theme they happened
  * to have on. Naming the attribute twice costs nothing and makes it (0,2,0), so a hand
  * edit outranks a theme wherever the two disagree, whatever order the sheets end up in.
+ *
+ * The `:not(#…)` lifts it again, to (1,2,0), above the site stylesheet the user can type
+ * — which is itself raised above the theme, and would otherwise tie with this. Of the
+ * two, the click is the more deliberate: `button { background: red }` is a rule about
+ * buttons, and a colour picked for *this* button is a decision about this one.
  */
 function selectorFor(wid) {
-  return `[${WID_ATTR}="${wid}"][${WID_ATTR}]`;
+  return `[${WID_ATTR}="${wid}"][${WID_ATTR}]:not(#webin-raise)`;
 }
 
 function serialiseRule(rule) {

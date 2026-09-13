@@ -81,6 +81,26 @@ export const EditMode = Object.freeze({
 });
 
 /**
+ * Which tool Edit mode is holding.
+ *
+ * The pencil is the editor engaged: the pointer highlights what it is over, a click
+ * selects, and everything in the inspector changes the page. The arrow is the editor
+ * letting go — nothing highlights, nothing is selected, no key is intercepted, and the
+ * site is just a site again, so you can read it or click through to the page you actually
+ * meant to edit. Arrow means no edit; that is the whole of it.
+ *
+ * The code tool is the pencil's other hand. It selects the same way and changes the same
+ * page, but the change is written rather than dialled: the selection's declarations as
+ * text, and a stylesheet for the whole site alongside them, for the properties no widget
+ * covers and the things no click can land on — a `::before`, a `:nth-child`, a breakpoint.
+ */
+export const EditTool = Object.freeze({
+  POINT: 'point',
+  EDIT: 'edit',
+  CODE: 'code',
+});
+
+/**
  * Which viewport an edit applies to.
  *
  * Version one only ever writes `ALL`. The field exists anyway, and the override sheet
@@ -113,6 +133,39 @@ export const Mark = Object.freeze({
    */
   INK_DARK: 'kd',
   INK_LIGHT: 'kl',
+});
+
+/**
+ * Structural roles a theme may style separately from an ordinary surface.
+ *
+ * A fixed vocabulary, and deliberately so. The obvious alternative — letting a theme ship
+ * its own selectors — is how a file ends up matching `[class*='card']` and painting
+ * `discard-button` and `cardholder-name` as panels. Every role here is decided by a tag
+ * name or an ARIA attribute, which is a fact about the document rather than a guess at
+ * one, so a theme picks from what the engine can actually recognise.
+ *
+ * A card is not on the list: an element that paints its own opaque box already has a mark
+ * of its own, arrived at by looking at what is painted rather than at what it is called,
+ * and that test is better than any selector for the job.
+ */
+export const ROLES = Object.freeze([
+  'nav', 'header', 'footer', 'sidebar', 'modal', 'popover', 'button', 'field', 'table',
+]);
+
+/**
+ * The mark each role writes into the stamp attribute. Two characters, like every other
+ * mark, and none of them collide with a token prefix (`bg`, `tx`, `bd`, `rd`, `pd`, `gp`).
+ */
+export const RoleMark = Object.freeze({
+  nav: 'nv',
+  header: 'hd',
+  footer: 'ft',
+  sidebar: 'sb',
+  modal: 'ml',
+  popover: 'pv',
+  button: 'bt',
+  field: 'fd',
+  table: 'tb',
 });
 
 /**

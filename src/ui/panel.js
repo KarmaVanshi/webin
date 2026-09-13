@@ -14,7 +14,8 @@
 
 import { Emitter, escapeHtml } from '../shared/util.js';
 import { OWNED_ATTR, APPEARANCE_ATTR } from '../shared/types.js';
-import { NAME_LIMIT } from '../shared/theme-format.js';
+import { NAME_LIMIT, backdropCss } from '../shared/theme-format.js';
+import { IMAGE_ACCEPT, ImageError, readImageFile } from '../shared/image.js';
 import { GROUPS } from '../themes/library.js';
 import { panelCss } from './panel-css.js';
 import { icon } from './icons.js';
@@ -47,6 +48,15 @@ export class Panel extends Emitter {
   #shadow = null;
   #root = null;
   #toastTimer = null;
+  /**
+   * What is in each code pane that has not been applied yet.
+   *
+   * The panes carry their text in the DOM, and a repaint that happens while the caret is
+   * elsewhere — clicking the page to look at another element, say — would put the last
+   * *applied* text back and throw the draft away. So the draft is kept here and drawn
+   * back in, until it is applied or, for the element pane, until the selection moves on.
+   */
+  #drafts = { element: null, site: null };
   #state = {
     host: '',
     themes: [],
@@ -65,7 +75,7 @@ export class Panel extends Emitter {
     editCount: 0,
     /** Which inspector sections are open, and which box fields are linked. Panel state:
      *  it is about looking at the page, not about changing it. */
-    sections: { layout: false, spacing: true, type: true, appearance: true, flex: false },
+    sections: { styles: true, layout: false, spacing: true, type: true, appearance: true, flex: false },
     linked: { padding: true, margin: true },
     menuOpen: false,
     toast: null,
@@ -110,6 +120,17 @@ export class Panel extends Emitter {
     file.setAttribute('aria-label', 'Choose a theme file');
     file.addEventListener('change', this.#onFile);
     shadow.append(file);
+
+    // A second picker, because the two take different files and mean different things: one
+    // replaces the theme, the other sets a property on the element you have selected.
+    const picture = this.#doc.createElement('input');
+    picture.type = 'file';
+    picture.accept = IMAGE_ACCEPT;
+    picture.hidden = true;
+    picture.setAttribute('aria-label', 'Choose a background image');
+    picture.dataset.picker = 'image';
+    picture.addEventListener('change', this.#onImageFile);
+    shadow.append(picture);
 
     this.#host = host;
     this.#shadow = shadow;
@@ -251,7 +272,7 @@ export class Panel extends Emitter {
     : s.view === 'preview' ? previewSheet(s)
     : s.view === 'share' ? shareSheet(s)
     : s.view === 'rename' ? renameSheet(s)
-    : s.view === 'edit' ? renderInspector(s.editor?.selection ?? null, s)
+    : s.view === 'edit' ? renderInspector(s.editor?.selection ?? null, { ...s, drafts: this.#drafts })
     : gallery(s)}</div>
   ${footer(s)}
   ${s.toast ? toast(s.toast) : ''}
@@ -291,9 +312,14 @@ export class Panel extends Emitter {
       : `[data-action="${quote(action)}"][data-value="${quote(value)}"]`;
   }
 
-  /** Opens the file picker; the change handler emits the file's text. */
+  /** Opens the theme file picker; the change handler emits the file's text. */
   pickFile() {
-    this.#shadow?.querySelector('input[type="file"]')?.click();
+    this.#shadow?.querySelector('input[type="file"]:not([data-picker])')?.click();
+  }
+
+  /** Opens the image picker; the change handler emits a `data:` URL. */
+  pickImage() {
+    this.#shadow?.querySelector('input[data-picker="image"]')?.click();
   }
 
   #applyAppearance() {
@@ -321,6 +347,26 @@ export class Panel extends Emitter {
     }
   };
 
+  #onImageFile = async (event) => {
+    const input = event.target;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    try {
+      // A photo takes a moment to decode and shrink, and a picker that closes onto nothing
+      // reads as one that failed.
+      this.toast('info', 'Reading that image…', 0);
+      const image = await readImageFile(file, this.#doc.defaultView ?? globalThis);
+      // The dimensions travel with the URL: how the picture should sit in the box depends
+      // on its shape, and this is the only place that knows it.
+      this.emit('action', { action: 'background-image', value: image });
+    } catch (error) {
+      // An `ImageError` is a sentence written for the person who picked the file; anything
+      // else is a fault, and "that could not be read" is the honest summary of one.
+      this.toast('error', error instanceof ImageError ? error.message : 'That image could not be read.');
+    }
+  };
+
   #onClick = (event) => {
     // Some controls are buttons — a segmented choice, a link toggle — so they never fire
     // `change` and have to be picked up here instead.
@@ -340,8 +386,36 @@ export class Panel extends Emitter {
     }
     event.preventDefault();
     event.stopPropagation();
-    this.emit('action', { action: trigger.dataset.action, value: trigger.dataset.value ?? null });
+
+    // The code panes carry their value in the DOM rather than in an attribute, so the
+    // button that applies one has to go and fetch it. Read at the moment of the press, not
+    // on every keystroke: what is in the box until then is a draft.
+    const action = trigger.dataset.action;
+    const scope = action === 'apply-element-css' ? 'element' : action === 'apply-site-css' ? 'site' : null;
+    if (scope) {
+      this.#applyCode(scope);
+      return;
+    }
+
+    this.emit('action', { action, value: trigger.dataset.value ?? null });
   };
+
+  /** Hands a code pane's text to the runtime. Applied text is no longer a draft. */
+  #applyCode(scope) {
+    const area = this.#shadow?.querySelector(`[data-code="${scope}"]`);
+    this.#drafts[scope] = null;
+    this.emit('action', { action: `apply-${scope}-css`, value: area?.value ?? '' });
+  }
+
+  /** Remembers what is in a code pane, keyed to the selection it was written for. */
+  #keepDraft(area) {
+    const scope = area?.dataset?.code;
+    if (!scope) return;
+    this.#drafts[scope] = {
+      text: area.value,
+      key: scope === 'element' ? (this.#state.editor?.selection?.id ?? null) : null,
+    };
+  }
 
   #onInput = (event) => {
     // The counter is written straight into the DOM rather than through `setState`, because
@@ -349,6 +423,10 @@ export class Panel extends Emitter {
     if (event.target?.id === 'wb-rename') {
       const count = this.#shadow?.querySelector('.wb-count');
       if (count) count.textContent = `${event.target.value.length}/${NAME_LIMIT}`;
+      return;
+    }
+    if (event.target?.dataset?.code) {
+      this.#keepDraft(event.target);
       return;
     }
     const control = event.target.closest?.('[data-control]');
@@ -388,6 +466,32 @@ export class Panel extends Emitter {
 
   #onKeyDown = (event) => {
     event.stopPropagation();
+
+    // The code panes are a code editor, however small, and the muscle memory that comes
+    // with one should work: Tab indents rather than leaving the field, Shift+Tab takes the
+    // indent back, and ⌘Enter applies what was written.
+    const code = event.target?.dataset?.code ? event.target : null;
+    if (code && event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      indentSelection(code, event.shiftKey);
+      this.#keepDraft(code);
+      return;
+    }
+    if (code && event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      this.#applyCode(code.dataset.code);
+      return;
+    }
+    if (code && event.key === 'Escape') {
+      // Leaving the box is what Escape means inside one; it is not a request to leave
+      // Edit mode, and it must never throw the text away.
+      event.preventDefault();
+      this.#keepDraft(code);
+      code.blur();
+      this.#shadow?.querySelector('.wb-panel')?.focus({ preventScroll: true });
+      return;
+    }
+
     // A name is one line, so Enter means "done" rather than "new paragraph".
     if (event.key === 'Enter' && event.target?.id === 'wb-rename') {
       event.preventDefault();
@@ -402,6 +506,10 @@ export class Panel extends Emitter {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     if (this.#state.menuOpen) this.setState({ menuOpen: false });
+    // Leaving Edit mode is the runtime's to do: the editor has hold of the page, and a
+    // panel that merely showed the gallery would leave it holding on — clicks swallowed,
+    // hover marks drawn, on a page that says it is not being edited.
+    else if (this.#state.view === 'edit') this.emit('action', { action: 'mode', value: 'gallery' });
     else if (this.#state.view !== 'gallery') this.setState({ view: 'gallery', share: null, preview: null, rename: null });
     else this.emit('action', { action: 'close' });
   };
@@ -529,7 +637,10 @@ function card(theme, active) {
 function preview(theme) {
   const p = theme.palette;
   const radius = Math.min(theme.radius ?? 4, 10);
-  const backdrop = theme.effects.backdrop ?? p.background;
+  // A gradient longer than the style guard admits would be cut mid-function and paint
+  // nothing at all; the base colour is the honest preview of one that size.
+  const painted = backdropCss(theme.effects.backdrop);
+  const backdrop = painted && painted.length <= 400 ? painted : (theme.effects.backdrop?.base ?? p.background);
   const translucent = theme.effects.surfaceAlpha != null;
   const border = theme.effects.borderWidth
     ? `${Math.min(theme.effects.borderWidth, 2)}px solid ${css(p.border)}`
@@ -687,23 +798,59 @@ function shareSheet(s) {
 </div>`;
 }
 
+/**
+ * How many changes of the user's own this site is carrying.
+ *
+ * Saved and unsaved are one number here on purpose. The footer answers "what have I done
+ * to this site", and an edit you made a minute ago and have not pressed Save on is
+ * something you did — reporting the site as untouched until it reaches storage is the
+ * panel disagreeing with the page in front of you.
+ */
+function editCount(s) {
+  return (s.editCount ?? 0) + (s.editor?.pending ?? 0);
+}
+
 function footer(s) {
-  if (s.view === 'edit') return renderEditorBar(s.editor ?? {});
+  if (s.view === 'edit') return renderEditorBar(s.editor ?? {}, s);
   if (s.view !== 'gallery') {
     return `<div class="wb-foot">
       <button type="button" class="wb-btn wb-btn--quiet" data-action="cancel">${icon('back', 13)}Back</button>
       <span class="wb-foot-label"></span></div>`;
   }
   const active = s.themes.find((t) => t.id === s.activeId) ?? null;
+  const edits = editCount(s);
+  const made = `${edits} edit${edits === 1 ? '' : 's'}`;
   return `
 <div class="wb-foot">
   <span class="wb-foot-label">${active
-    ? `<b>${escapeHtml(active.name)}</b> applied here`
-    : `${s.themes.length} themes · this site is untouched`}</span>
+    ? `<b>${escapeHtml(active.name)}</b> applied here${edits ? ` · ${made}` : ''}`
+    : `${s.themes.length} themes · ${edits ? `${made} here` : 'this site is untouched'}`}</span>
   ${active ? `<button type="button" class="wb-btn" data-action="share"
     title="Copy a share code">${icon('share', 12)}Share</button>` : ''}
   ${active ? `<button type="button" class="wb-btn" data-action="clear">Remove</button>` : ''}
 </div>`;
+}
+
+/**
+ * Tab inside a textarea: two spaces in at the caret, or in front of every selected line;
+ * Shift+Tab takes up to two spaces back off each of those lines.
+ */
+function indentSelection(area, outdent) {
+  const { value, selectionStart: start, selectionEnd: end } = area;
+  const unit = '  ';
+  if (!outdent && start === end) {
+    area.setRangeText(unit, start, end, 'end');
+    return;
+  }
+  const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+  const lineEnd = end > start && value[end - 1] === '\n' ? end - 1 : end;
+  const block = value.slice(lineStart, lineEnd);
+  const lines = block.split('\n');
+  const changed = lines.map((line) => (outdent
+    ? line.replace(/^ {1,2}/, '')
+    : `${unit}${line}`)).join('\n');
+  area.setRangeText(changed, lineStart, lineEnd, 'select');
+  area.setSelectionRange(lineStart, lineStart + changed.length);
 }
 
 function toast(t) {
@@ -802,6 +949,13 @@ function matchNode(current, next) {
       return;
     }
     const value = next.getAttribute('value') ?? '';
+    // A colour input normalises whatever it is given to `#rrggbb`, so comparing the raw
+    // strings would rewrite it on every repaint. Writing to one looks like nothing and is
+    // a real event to the native picker attached to it, which may be open and mid-drag.
+    if (current.type === 'color') {
+      if (current.value.toLowerCase() !== value.toLowerCase()) current.value = value;
+      return;
+    }
     // Setting `value` on an input the user is not in is what puts an undone change back on
     // screen; setting it needlessly would drop the selection inside it.
     if (current.value !== value) current.value = value;

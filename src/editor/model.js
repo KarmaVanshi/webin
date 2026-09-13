@@ -146,6 +146,40 @@ export function isSelectable(element, view = window) {
   return isRenderable(element, view);
 }
 
+/**
+ * The element to step *into* from here — the counterpart to walking up to a parent (§25).
+ *
+ * Depth-first rather than literally "the first child": real pages are full of nodes the
+ * editor will not offer — a `<script>`, a zero-height clearfix, a wrapper the site has
+ * hidden — and stopping at one of those would make the button look broken. Walking past
+ * them lands on the first element a click could have landed on anyway.
+ */
+export function firstSelectableChild(element, view = window) {
+  for (const child of element?.children ?? []) {
+    if (isSelectable(child, view)) return child;
+    const nested = firstSelectableChild(child, view);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+/**
+ * The next element beside this one that a click could have landed on (§25).
+ *
+ * `direction` is `1` for the next sibling and `-1` for the previous. Siblings the editor
+ * would not offer — a `<script>`, a hidden wrapper, a zero-height spacer — are walked
+ * past, for the same reason `firstSelectableChild` walks into them: stopping on one would
+ * make the button look broken.
+ */
+export function selectableSibling(element, direction = 1, view = window) {
+  let node = element;
+  for (;;) {
+    node = direction < 0 ? node?.previousElementSibling : node?.nextElementSibling;
+    if (!node) return null;
+    if (isSelectable(node, view)) return node;
+  }
+}
+
 /** Class list as an array, working for SVG elements too (their className is an object). */
 export function classListOf(element) {
   return [...(element.classList ?? [])];

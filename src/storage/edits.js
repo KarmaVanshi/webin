@@ -15,6 +15,8 @@
 import { KEY, readKey, writeKey, deleteKey } from './bridge.js';
 import { uid } from '../shared/util.js';
 import { Breakpoint, OpKind } from '../shared/types.js';
+import { MAX_IMAGE_VALUE } from '../shared/css-values.js';
+import { SHEET_LIMIT } from '../shared/css-text.js';
 
 export const EDITS_VERSION = 1;
 
@@ -23,6 +25,18 @@ export const SITE_SCOPE = '*';
 
 /** A page with more saved changes than this is not a page anyone is still editing. */
 const MAX_CHANGES = 400;
+
+/**
+ * How long a stored declaration's value may be.
+ *
+ * Everything is short except a background holding an inline picture, which is enormous by
+ * the standards of every other declaration and already has a hard ceiling of its own at
+ * the gate that let it in. Truncating one would be worse than refusing it: a half a
+ * `data:` URL is not a shorter picture, it is an invalid value the browser silently drops,
+ * so the edit would apply, save, and then come back after a reload having quietly stopped
+ * working.
+ */
+const valueLimit = (property) => (property === 'background-image' ? MAX_IMAGE_VALUE : 400);
 
 const KINDS = new Set(Object.values(OpKind));
 
@@ -96,7 +110,8 @@ function normaliseChange(raw) {
     change.properties = {};
     for (const [property, value] of Object.entries(raw.properties)) {
       if (typeof property === 'string' && typeof value === 'string') {
-        change.properties[property.slice(0, 60)] = value.slice(0, 400);
+        const key = property.slice(0, 60);
+        change.properties[key] = value.slice(0, valueLimit(key));
       }
     }
   }
@@ -140,13 +155,17 @@ export class EditStore {
       const changes = (Array.isArray(entry?.changes) ? entry.changes : [])
         .map(normaliseChange)
         .filter(Boolean);
-      if (changes.length) scopes[String(scope).slice(0, 200)] = { changes };
+      const sheet = typeof entry?.sheet === 'string' ? entry.sheet.slice(0, SHEET_LIMIT) : '';
+      if (changes.length || sheet) scopes[String(scope).slice(0, 200)] = { changes, sheet };
     }
     return { v: EDITS_VERSION, host, updatedAt: raw.updatedAt ?? Date.now(), scopes };
   }
 
   async #write(host, record) {
-    const total = Object.values(record.scopes).reduce((n, s) => n + s.changes.length, 0);
+    // A stylesheet with no element changes beside it is still work somebody did. Counting
+    // only the changes would delete the record the moment a site was styled by hand alone.
+    const total = Object.values(record.scopes)
+      .reduce((n, s) => n + s.changes.length + (s.sheet ? 1 : 0), 0);
     if (total === 0) return deleteKey(this.#backend, KEY.edits(host));
     return writeKey(this.#backend, KEY.edits(host), { ...record, v: EDITS_VERSION, updatedAt: Date.now() });
   }
@@ -164,6 +183,33 @@ export class EditStore {
       .filter(([name]) => matchScope(name, scope))
       .sort((a, b) => scopeSpecificity(a[0]) - scopeSpecificity(b[0]))
       .flatMap(([name, entry]) => entry.changes.map((change) => ({ ...change, scope: name })));
+  }
+
+  /**
+   * The stylesheet saved for whichever scope covers this path.
+   *
+   * Scopes are tried from the most specific outward, the same way element changes are, so
+   * a sheet written for one page beats one written for the whole site.
+   */
+  async sheetFor(host, path) {
+    const record = await this.load(host);
+    const scope = scopeFromPath(path);
+    const match = Object.entries(record.scopes)
+      .filter(([name, entry]) => entry.sheet && matchScope(name, scope))
+      .sort((a, b) => scopeSpecificity(b[0]) - scopeSpecificity(a[0]))[0];
+    return match?.[1].sheet ?? '';
+  }
+
+  /** Saves the stylesheet for the scope this path belongs to. */
+  async saveSheet(host, path, css) {
+    const record = await this.load(host);
+    const scope = scopeFromPath(path);
+    const entry = record.scopes[scope] ?? { changes: [], sheet: '' };
+    entry.sheet = String(css ?? '').slice(0, SHEET_LIMIT);
+    if (!entry.changes.length && !entry.sheet) delete record.scopes[scope];
+    else record.scopes[scope] = entry;
+    await this.#write(host, record);
+    return entry.sheet;
   }
 
   /** Adds a change, or folds it into the one already saved for that element. */
@@ -211,7 +257,9 @@ export class EditStore {
     for (const [scope, entry] of Object.entries(record.scopes)) {
       const next = entry.changes.filter((c) => c.id !== changeId);
       if (next.length !== entry.changes.length) removed = true;
-      if (next.length) record.scopes[scope] = { changes: next };
+      // The scope's stylesheet is not one of its changes, and taking one change away must
+      // not take the sheet with it.
+      if (next.length || entry.sheet) record.scopes[scope] = { changes: next, sheet: entry.sheet ?? '' };
       else delete record.scopes[scope];
     }
     if (removed) await this.#write(host, record);
@@ -242,9 +290,14 @@ export class EditStore {
     return { removed, remaining: 0 };
   }
 
-  /** Whether a host has anything saved at all, for the badge and the panel footer. */
+  /**
+   * Whether a host has anything saved at all, for the badge and the panel footer.
+   *
+   * A stylesheet counts as one thing, the same way `#write` counts it: a site styled by
+   * hand alone is a site with edits, and the button that removes them has to know so.
+   */
   async count(host) {
     const record = await this.load(host);
-    return Object.values(record.scopes).reduce((n, s) => n + s.changes.length, 0);
+    return Object.values(record.scopes).reduce((n, s) => n + s.changes.length + (s.sheet ? 1 : 0), 0);
   }
 }

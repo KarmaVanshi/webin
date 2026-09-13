@@ -184,6 +184,130 @@ export function explainProperty(element, property, view = window, { overrideValu
   };
 }
 
+/** Most rules and declarations the styles list will carry for one element. */
+const STYLES_RULE_LIMIT = 40;
+const STYLES_DECLARATION_LIMIT = 60;
+
+/**
+ * Splits `color: red; padding: 4px 8px` into `[property, value]` pairs, leaving a
+ * `rgba(…)` or a `url(…)` with a `;` inside its quotes in one piece.
+ */
+function splitDeclarations(cssText) {
+  const out = [];
+  let depth = 0;
+  let quote = null;
+  let current = '';
+  const flush = () => {
+    const colon = current.indexOf(':');
+    if (colon > 0) {
+      const property = current.slice(0, colon).trim();
+      const value = current.slice(colon + 1).replace(/!\s*important\s*$/i, '').trim();
+      if (property && value) out.push([property, value]);
+    }
+    current = '';
+  };
+  for (const ch of String(cssText ?? '')) {
+    if (quote) { current += ch; if (ch === quote) quote = null; continue; }
+    if (ch === '"' || ch === "'") { quote = ch; current += ch; continue; }
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    if (ch === ';' && depth === 0) { flush(); continue; }
+    current += ch;
+  }
+  flush();
+  return out;
+}
+
+/** The shorthand a longhand belongs to, so `padding` can be seen to outrank `padding-top`. */
+function shorthandOf(property) {
+  const match = property.match(/^(padding|margin|border|background|font|flex|grid|outline|overflow|text-decoration|transition|animation|inset|gap)(-|$)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * The CSS the site itself applies to an element, as a browser's Styles pane would list it.
+ *
+ * The inspector's rows show what a property *computes* to; this shows where that came
+ * from — every rule that matches, most powerful first, with each declaration as the
+ * author wrote it and struck through where something stronger has overridden it. The
+ * element is named the way the page named it: tag, id and classes.
+ *
+ * Only the site's own CSS. Webin's theme and override sheets are left out, because the
+ * question this answers is "what did the site say" — and what Webin said is in the rows.
+ *
+ * @returns {{ target:string, inline:Array|null, rules:Array, blocked:number }}
+ */
+export function appliedStyles(element, view = window) {
+  const tag = element.tagName.toLowerCase();
+  const classes = [...(element.classList ?? [])].map((c) => `.${c}`).join('');
+  const target = `${tag}${element.id ? `#${element.id}` : ''}${classes}`;
+
+  const { rules, blockedSheets } = matchingRules(element, view);
+  // Most powerful first, which is the order a person reads a cascade in.
+  const ordered = rules.slice(-STYLES_RULE_LIMIT).reverse();
+
+  const entries = [];
+  const inlineText = element.getAttribute?.('style') ?? '';
+  const inlineDecls = splitDeclarations(inlineText)
+    .filter(([property]) => !/^data-webin|^--webin/.test(property))
+    .map(([property, value]) => ({
+      property, value,
+      important: element.style?.getPropertyPriority(property) === 'important',
+    }));
+  if (inlineDecls.length) entries.push({ selector: 'element.style', source: 'inline', media: null, inline: true, declarations: inlineDecls });
+
+  for (const rule of ordered) {
+    const declarations = splitDeclarations(rule.style?.cssText ?? '')
+      .slice(0, STYLES_DECLARATION_LIMIT)
+      .map(([property, value]) => ({
+        property, value,
+        important: rule.style.getPropertyPriority(property) === 'important',
+      }));
+    if (!declarations.length) continue;
+    const source = rule.href ? rule.href.split('/').pop()?.split('?')[0] || rule.href : '<style>';
+    entries.push({ selector: rule.selector, source, media: rule.media, inline: false, declarations });
+  }
+
+  // Who wins each property. Inline beats every ordinary rule and loses to an `!important`
+  // one; among rules the more powerful one is earlier in this list, and `!important`
+  // outranks everything without it.
+  const strength = (entry, declaration, index) => {
+    const rank = entries.length - index;
+    if (declaration.important) return 10_000 + (entry.inline ? 5_000 : rank);
+    return entry.inline ? 5_000 : rank;
+  };
+  const winners = new Map();
+  entries.forEach((entry, index) => {
+    for (const declaration of entry.declarations) {
+      const score = strength(entry, declaration, index);
+      const current = winners.get(declaration.property);
+      if (!current || score > current.score) winners.set(declaration.property, { score, declaration });
+    }
+  });
+  for (const [index, entry] of entries.entries()) {
+    for (const declaration of entry.declarations) {
+      const score = strength(entry, declaration, index);
+      const own = winners.get(declaration.property);
+      let overridden = own && own.declaration !== declaration;
+      // A shorthand set by something stronger overrides the longhand too.
+      const shorthand = shorthandOf(declaration.property);
+      if (!overridden && shorthand && shorthand !== declaration.property) {
+        const wider = winners.get(shorthand);
+        if (wider && wider.score > score) overridden = true;
+      }
+      declaration.overridden = Boolean(overridden);
+    }
+  }
+
+  const inline = entries.find((e) => e.inline) ?? null;
+  return {
+    target,
+    inline: inline ? inline.declarations : null,
+    rules: entries.filter((e) => !e.inline),
+    blocked: blockedSheets,
+  };
+}
+
 /**
  * Resolves a CSS variable to its value and the element that defines it (§53).
  * @returns {{name:string, value:string, definedOn:Element|null}|null}
@@ -222,11 +346,11 @@ export function requiredStrength(element, property, view = window) {
   const strongest = rules
     .filter((r) => r.style.getPropertyValue(property))
     .reduce((max, r) => (compareSpecificity(r.specificity, max) > 0 ? r.specificity : max), [0, 0, 0]);
-  // Our selector names the attribute twice — `[data-webin-id="w1"][data-webin-id]` — so it
-  // scores (0,2,0). Comparing against (0,1,0) here would add `!important` to every ordinary
-  // class rule we already beat, which is how an override engine becomes impossible to
-  // reason about later.
-  const needsImportant = compareSpecificity(strongest, [0, 2, 0]) >= 0;
+  // Our selector names the attribute twice and an id nobody has —
+  // `[data-webin-id="w1"][data-webin-id]:not(#webin-raise)` — so it scores (1,2,0).
+  // Comparing against anything lower here would add `!important` to every ordinary rule
+  // we already beat, which is how an override engine becomes impossible to reason about.
+  const needsImportant = compareSpecificity(strongest, [1, 2, 0]) >= 0;
   return {
     important: needsImportant,
     reason: needsImportant ? `An author rule matches with equal or higher specificity.` : null,

@@ -18,6 +18,7 @@ const PATHS = {
   share: '<path d="M10 13.5a3.5 3.5 0 0 0 5 0l3-3a3.54 3.54 0 0 0-5-5l-1.5 1.5"/><path d="M14 10.5a3.5 3.5 0 0 0-5 0l-3 3a3.54 3.54 0 0 0 5 5L12.5 17"/>',
   trash: '<path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 12.5h9L17.5 7"/>',
   pencil: '<path d="M4.5 19.5h4l10-10a2.83 2.83 0 0 0-4-4l-10 10Z"/><path d="m14.5 7.5 2 2"/>',
+  code: '<path d="m8.5 8-4.5 4 4.5 4"/><path d="m15.5 8 4.5 4-4.5 4"/><path d="m13.5 4.5-3 15"/>',
   reset: '<path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1"/><path d="M20.5 4v5h-5"/>',
   camera: '<path d="M3.5 8.5h3.2l1.6-2.5h7.4l1.6 2.5h3.2v10H3.5Z"/><circle cx="12" cy="13" r="3.4"/>',
   sun: '<circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.5M12 19v2.5M4.2 4.2 6 6M18 18l1.8 1.8M2.5 12H5M19 12h2.5M4.2 19.8 6 18M18 6l1.8-1.8"/>',
@@ -37,6 +38,13 @@ const PATHS = {
   link: '<path d="M9.5 14.5a3.2 3.2 0 0 0 4.6 0l2.8-2.8a3.25 3.25 0 0 0-4.6-4.6l-1 1"/><path d="M14.5 9.5a3.2 3.2 0 0 0-4.6 0l-2.8 2.8a3.25 3.25 0 0 0 4.6 4.6l1-1"/>',
   unlink: '<path d="M10.5 13.5 8.4 15.6a3.25 3.25 0 0 1-4.6-4.6l2.1-2.1"/><path d="m13.5 10.5 2.1-2.1a3.25 3.25 0 0 1 4.6 4.6l-2.1 2.1"/><path d="m3.5 3.5 17 17"/>',
   chevron: '<path d="m9 5 7 7-7 7"/>',
+  // One glyph rotated 180°, because the two buttons are one gesture in two
+  // directions: out of the element you are in, and into the one below it.
+  levelUp: '<path d="M19.5 19.5H13a4 4 0 0 1-4-4V4"/><path d="m4.5 8.5 4.5-4.5 4.5 4.5"/>',
+  levelDown: '<path d="M4.5 4.5H11a4 4 0 0 1 4 4v11.5"/><path d="m10.5 15.5 4.5 4.5 4.5-4.5"/>',
+  // Sideways, to a sibling: the same family as the two above, drawn flat.
+  siblingPrev: '<path d="M19.5 12H8"/><path d="m12.5 7.5-4.5 4.5 4.5 4.5"/><path d="M4.5 5v14"/>',
+  siblingNext: '<path d="M4.5 12H16"/><path d="m11.5 7.5 4.5 4.5-4.5 4.5"/><path d="M19.5 5v14"/>',
   target: '<circle cx="12" cy="12" r="7.5"/><path d="M12 1.5v4M12 18.5v4M1.5 12h4M18.5 12h4"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
   save: '<path d="M4.5 4.5h11l4 4v11h-15Z"/><path d="M8 4.5v5h7v-5"/><path d="M7.5 19.5v-6h9v6"/>',
 };

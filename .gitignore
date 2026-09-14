@@ -1,4 +1,6 @@
-node_modules/
-*.zip
-.DS_Store
-shots/
+# Ignore everything
+*
+
+# Except PRIVACY.md
+!PRIVACY.md
+!.gitignore

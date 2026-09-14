@@ -30,7 +30,7 @@ import { ROLES } from './types.js';
  * decided by what an element paints; and the last three are the page's fixed furniture,
  * for which the engine writes the selector itself.
  */
-export const RULE_TARGETS = Object.freeze([...ROLES, 'surface', 'body', 'heading', 'link']);
+export const RULE_TARGETS = Object.freeze([...ROLES, 'surface', 'body', 'heading', 'link', 'small']);
 
 /**
  * The states a rule may be for.
@@ -38,7 +38,27 @@ export const RULE_TARGETS = Object.freeze([...ROLES, 'surface', 'body', 'heading
  * `current` is the item that is *selected* — the page you are on in a nav, the row that
  * is open — as distinct from `active`, which is the moment a button is held down.
  */
-export const RULE_STATES = Object.freeze(['hover', 'active', 'focus', 'placeholder', 'current']);
+export const RULE_STATES = Object.freeze(['hover', 'active', 'focus', 'placeholder', 'current',
+  'secondary', 'secondaryHover']);
+
+/**
+ * The states that are only a way of telling one kind of a target from another.
+ *
+ * A theme's `buttons.secondary` is not a moment in a button's life but a different button
+ * — the one that was not the page's call to action. The engine marks a button whose own
+ * fill was the page's accent as primary, and `secondary` is every other one; the state is
+ * meaningless on any other target, and is dropped there.
+ */
+const BUTTON_ONLY_STATES = new Set(['secondary', 'secondaryHover']);
+
+/**
+ * The parts of a target a rule may be written for.
+ *
+ * A table is the one target a file describes in pieces — its header row and its body rows
+ * — and the engine writes the selector for each piece itself, the way it does for the
+ * target. Nothing else has parts.
+ */
+export const RULE_PARTS = Object.freeze({ table: ['header', 'row'] });
 
 /** Most rules one theme may carry, explicit and read together. */
 export const RULE_LIMIT = 200;
@@ -59,7 +79,8 @@ const TARGET_WORDS = {
   sidebar: ['sidebar', 'aside', 'drawer', 'rail'],
   modal: ['modal', 'modals', 'dialog', 'sheet', 'overlay'],
   popover: ['popover', 'popovers', 'dropdown', 'dropdowns', 'tooltip', 'tooltips', 'menu', 'flyout'],
-  button: ['button', 'buttons', 'btn', 'primarybutton', 'cta'],
+  button: ['button', 'buttons', 'btn', 'primarybutton', 'cta', 'buttonprimary', 'secondarybutton', 'buttonsecondary',
+    'ghostbutton', 'buttonghost', 'outlinebutton', 'buttonoutline'],
   field: ['field', 'fields', 'input', 'inputs', 'textarea', 'select', 'textfield', 'form'],
   table: ['table', 'tables', 'grid', 'datatable'],
   surface: ['surface', 'surfaces', 'card', 'cards', 'panel', 'panels', 'window', 'windows',
@@ -67,6 +88,7 @@ const TARGET_WORDS = {
   body: ['body', 'page', 'text', 'root'],
   heading: ['heading', 'headings', 'title', 'titles', 'headline', 'headlines'],
   link: ['link', 'links', 'anchor', 'anchors', 'a'],
+  small: ['small', 'caption', 'captions', 'fineprint', 'footnote', 'footnotes', 'meta'],
 };
 
 /** Target, by any of the words above, or null. */
@@ -102,6 +124,8 @@ const PROPERTY_WORDS = {
   letterspacing: 'letter-spacing', tracking: 'letter-spacing',
   lineheight: 'line-height', leading: 'line-height',
   texttransform: 'text-transform', transform: 'transform',
+  translatey: 'transform', translatex: 'transform', lift: 'transform', translate: 'transform',
+  ring: 'box-shadow', focusring: 'box-shadow',
   textdecoration: 'text-decoration', underline: 'text-decoration',
   textshadow: 'text-shadow', textalign: 'text-align',
   opacity: 'opacity', padding: 'padding', margin: 'margin', gap: 'gap',
@@ -249,6 +273,21 @@ function coerce(property, value) {
 }
 
 /**
+ * A movement on hover, however the file wrote it: `translateY(-2px)` as CSS, `"-2px"` under
+ * a `translateY` key, or a bare `-2` — the last two are a vertical travel in px.
+ */
+function transformOf(key, value) {
+  if (typeof value === 'number') return Number.isFinite(value) && value !== 0 ? `translateY(${value}px)` : null;
+  if (typeof value !== 'string') return null;
+  const raw = value.trim();
+  if (!raw || /^(none|0|0px)$/i.test(raw)) return null;
+  if (/\(/.test(raw)) return raw;
+  if (!LENGTH.test(raw)) return null;
+  const length = /^-?\d*\.?\d+$/.test(raw) ? `${raw}px` : raw;
+  return key === 'translatex' ? `translateX(${length})` : `translateY(${length})`;
+}
+
+/**
  * Declarations from one CSS-flavoured block.
  *
  * Every key is looked up by the property it means; `hoverBackground` is `background` in the
@@ -265,7 +304,7 @@ export function readDeclarations(block, target = 'surface') {
   const out = { base: {}, states: {} };
   if (!block || typeof block !== 'object') return out;
 
-  const into = (bucket, property, value) => {
+  const into = (bucket, property, value, word = '') => {
     if (property === 'background') {
       // A background is a colour or a gradient, and the file rarely says which.
       if (typeof value === 'string' && isGradient(value)) bucket['background-image'] = value;
@@ -278,6 +317,11 @@ export function readDeclarations(block, target = 'surface') {
     if (property === 'placeholder') {
       const c = coerce('color', value);
       if (c) (out.states.placeholder ??= {}).color = c;
+      return;
+    }
+    if (property === 'transform') {
+      const t = transformOf(word, value);
+      if (t) bucket.transform = t;
       return;
     }
     const c = coerce(property, value);
@@ -306,7 +350,7 @@ export function readDeclarations(block, target = 'surface') {
         continue;
       }
       const property = PROPERTY_WORDS[rest] ?? (['ring', 'glow'].includes(rest) ? 'box-shadow' : null);
-      if (property) into(bucket, property, value);
+      if (property) into(bucket, property, value, rest);
       continue;
     }
 
@@ -324,7 +368,7 @@ export function readDeclarations(block, target = 'surface') {
     const property = PROPERTY_WORDS[flat] ?? (isAllowedProperty(toKebab(key)) ? toKebab(key) : null);
     if (!property) continue;
     if (value && typeof value === 'object' && !Array.isArray(value)) continue;
-    into(out.base, property, value);
+    into(out.base, property, value, flat);
   }
   return out;
 }
@@ -363,65 +407,94 @@ function variantOf(block, target) {
   return block;
 }
 
+/** The words a file uses for the plain button beside a primary one, and for the primary. */
+const PLAIN_BUTTON_WORDS = new Set(['button', 'buttons', 'btn']);
+const PRIMARY_BUTTON_WORDS = new Set(['primarybutton', 'buttonprimary', 'cta']);
+const SECONDARY_BUTTON_WORDS = new Set(['secondarybutton', 'buttonsecondary', 'ghostbutton', 'buttonghost',
+  'outlinebutton', 'buttonoutline']);
+
+/** Variant names inside a buttons block that describe the button that is not the call to action. */
+const SECONDARY_VARIANTS = ['secondary', 'outline', 'outlined', 'ghost', 'tertiary'];
+
+/** The format's own levers. A material made of nothing else is not written CSS. */
+const LEVER_KEYS = new Set(['borderWidth', 'blur', 'radius', 'surfaceAlpha', 'shadow']);
+
+/**
+ * The named materials a file keeps, by lower-cased name, from whichever block it used —
+ * but only the ones written in CSS-shaped words. The format's own materials are four
+ * numbers the engine composes from, and reading `{ blur: 28 }` back as a declaration
+ * would turn every saved theme into its own duplicate on the next open.
+ */
+function materialBlocks(source) {
+  const out = {};
+  for (const key of ['materials', 'material', 'surfaces']) {
+    const block = source[key];
+    if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
+    for (const [name, value] of Object.entries(block)) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      if (!Object.keys(value).some((k) => !LEVER_KEYS.has(k))) continue;
+      out[name.toLowerCase()] ??= value;
+    }
+  }
+  return out;
+}
+
+/** The first string in a block, for a `glow` a file wrote as one shadow or as a few named ones. */
+function firstString(value) {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object') return null;
+  return Object.values(value).find((v) => typeof v === 'string') ?? null;
+}
+
 /**
  * Rules for every kind of element the file describes, in its own words.
  *
- * Three places are looked in — `components`, `elements`, and the theme itself — and every
- * block found for a target counts. A file that says `surfaces.card` and also `cards.default`
- * has described its card twice, half in each place, and reading only one would lose the
- * other half; the rules are folded later, with the block read last answering where the
- * two disagree.
+ * Two passes, in a fixed order, because the rules are folded later with the rule read
+ * last answering where two disagree. First everything the file says about the theme as a
+ * whole — its typography, its one shadow, its glow, its shadow scale, what happens under
+ * the pointer and on focus, its named materials. Then every block that describes one kind
+ * of element, which therefore wins over the general statement: a `cards.shadow` beats
+ * `effects.shadow`, as it should, and a file that says `surfaces.card` and also
+ * `cards.default` has described its card twice, half in each place, and both halves count.
+ *
+ * Three places are looked in for element blocks — `components`, `elements`, and the theme
+ * itself. A block that names a material (`modal: { material: "strong" }`) is read as that
+ * material's declarations with its own on top, so the material's border, shadow and blur
+ * reach the page rather than only the four levers the format keeps for it.
  *
  * @returns {Array<{target:string, state:string|null, properties:object}>} raw, unvalidated
  */
 export function readComponentRules(source) {
   if (!source || typeof source !== 'object') return [];
   const rules = [];
-  const push = (target, state, properties) => {
-    if (properties && Object.keys(properties).length) rules.push({ target, state, properties });
+  const push = (target, state, properties, extra = {}) => {
+    if (properties && Object.keys(properties).length) rules.push({ target, state, properties, ...extra });
   };
+  const set = (bucket, property, value) => { const c = coerce(property, value); if (c != null) bucket[property] = c; };
+  const first = (...values) => values.find((v) => v != null && v !== '');
+  const object = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
+  const shadowString = (v) => (typeof v === 'string' && /\d/.test(v) ? v.trim() : null);
 
-  const blocks = [source.components, source.elements, source]
-    .filter((b) => b && typeof b === 'object');
-  for (const block of blocks) {
-    for (const [key, value] of Object.entries(block)) {
-      const target = targetOf(key);
-      if (!target) continue;
-      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
-      // `text: { color, headingColor }` is the body's ink and the headings' ink at once.
-      if (target === 'body' && key.toLowerCase() === 'text') {
-        const c = coerce('color', value.color);
-        if (c) push('body', null, { color: c });
-        const h = coerce('color', value.headingColor ?? value.heading);
-        if (h) push('heading', null, { color: h });
-        continue;
-      }
-      const chosen = variantOf(value, target);
-      const { base, states } = readDeclarations(chosen, target);
-      push(target, null, base);
-      for (const [state, properties] of Object.entries(states)) push(target, state, properties);
-    }
-  }
+  // ── The theme as a whole ──────────────────────────────────────────────────────────────
 
   // Typography, which files write as one block about two kinds of text.
-  const typography = source.typography && typeof source.typography === 'object' ? source.typography : {};
+  const typography = object(source.typography) ?? {};
   const body = {};
   const heading = {};
-  const bodyBlock = typography.body && typeof typography.body === 'object' ? typography.body : {};
-  const headingBlock = typography.heading && typeof typography.heading === 'object' ? typography.heading : {};
-  const first = (...values) => values.find((v) => v != null && v !== '');
+  const bodyBlock = object(typography.body) ?? {};
+  const headingBlock = object(typography.heading) ?? {};
 
   const bodySize = first(bodyBlock.size, bodyBlock.fontSize, typography.bodyFontSize, typography.fontSize, typography.baseSize);
-  const bodyWeight = first(bodyBlock.weight, bodyBlock.fontWeight, typography.bodyWeight, typography.bodyFontWeight);
+  const bodyWeight = first(bodyBlock.weight, bodyBlock.fontWeight, typography.bodyWeight, typography.bodyFontWeight,
+    typography.fontWeight, typography.weight);
   const bodyLine = first(bodyBlock.lineHeight, typography.lineHeight, typography.bodyLineHeight);
-  const bodySpacing = first(bodyBlock.letterSpacing, typography.bodyLetterSpacing,
-    headingBlock.letterSpacing == null && typography.headingLetterSpacing == null ? typography.letterSpacing : null);
+  // A bare `letterSpacing` is the body's; the headings inherit it unless they have their own.
+  const bodySpacing = first(bodyBlock.letterSpacing, typography.bodyLetterSpacing, typography.letterSpacing);
   const bodyColour = first(bodyBlock.color, typography.bodyColor, typography.color);
   const headingSpacing = first(headingBlock.letterSpacing, typography.headingLetterSpacing);
   const headingColour = first(headingBlock.color, typography.headingColor);
   const headingTransform = first(headingBlock.textTransform, typography.headingTransform);
 
-  const set = (bucket, property, value) => { const c = coerce(property, value); if (c != null) bucket[property] = c; };
   set(body, 'font-size', bodySize);
   set(body, 'font-weight', bodyWeight);
   set(body, 'line-height', bodyLine);
@@ -432,9 +505,12 @@ export function readComponentRules(source) {
   set(heading, 'text-transform', headingTransform);
   push('body', null, body);
   push('heading', null, heading);
+  // The small print, when the file describes it: `<small>` and a figure's caption.
+  const smallBlock = object(typography.small) ?? object(typography.caption) ?? object(typography.fine);
+  if (smallBlock) push('small', null, readDeclarations(smallBlock, 'small').base);
 
   // A `borders` block is the edge every surface gets.
-  const borders = source.borders && typeof source.borders === 'object' ? source.borders : null;
+  const borders = object(source.borders);
   if (borders) {
     const edge = {};
     set(edge, 'border-width', borders.width ?? borders.borderWidth);
@@ -444,10 +520,164 @@ export function readComponentRules(source) {
     push('surface', null, edge);
   }
 
-  // A raw shadow on the theme's effects is the card shadow, when it is not one of ours.
-  const effects = source.effects && typeof source.effects === 'object' ? source.effects : {};
-  const shadow = effects.shadow ?? effects.boxShadow ?? effects.softShadow;
-  if (typeof shadow === 'string' && /\d/.test(shadow)) push('surface', null, { 'box-shadow': shadow.trim() });
+  const effects = object(source.effects) ?? {};
+
+  // A glow written as a shadow is the bloom on the headings, which is what the format's
+  // own `glow` means; the file has said what colour and how wide.
+  const glow = firstString(effects.glow ?? effects.textGlow ?? effects.headingGlow);
+  if (shadowString(glow)) push('heading', null, { 'text-shadow': glow.trim() });
+
+  // A scale of named shadows is a statement about depth: the middle of it is a card, the
+  // deep end is a modal, and whatever floats is a popover. Read before the element blocks
+  // so a card that names its own shadow is not overruled by the scale.
+  const scale = object(source.shadows) ?? {};
+  const fromScale = (...names) => shadowString(first(...names.map((n) => scale[n])));
+  const cardShadow = fromScale('card', 'medium', 'md', 'default', 'soft', 'small', 'sm');
+  const modalShadow = fromScale('modal', 'large', 'lg', 'deep', 'xl', 'floating', 'medium');
+  const popoverShadow = fromScale('popover', 'floating', 'large', 'lg', 'medium', 'md');
+  if (cardShadow) push('surface', null, { 'box-shadow': cardShadow });
+  if (modalShadow) push('modal', null, { 'box-shadow': modalShadow });
+  if (popoverShadow) push('popover', null, { 'box-shadow': popoverShadow });
+
+  // What happens under the pointer, said once for the theme: a movement, a deeper shadow.
+  // Cards and buttons both move; a nav bar does not, or it takes its fixed children with it.
+  const hoverBlocks = [object(source.motion?.hover), object(source.effects?.hover), object(source.interaction?.hover),
+    object(source.animation?.hover), object(source.transitions?.hover)].filter(Boolean);
+  const hover = {};
+  for (const block of hoverBlocks) {
+    const moved = first(block.transform, block.lift, block.translateY, block.translate, block.move);
+    const t = transformOf(block.translateY != null ? 'translatey' : 'lift', moved);
+    if (t && !hover.transform) hover.transform = t;
+    const shadow = shadowString(first(block.shadow, block.boxShadow, block.elevation));
+    if (shadow && !hover['box-shadow']) hover['box-shadow'] = shadow;
+  }
+  const animation = object(source.animation) ?? {};
+  const hoverTransform = transformOf('lift', first(animation.hoverTransform, animation.hover?.transform, effects.hoverTransform, effects.hoverLift));
+  if (hoverTransform && !hover.transform) hover.transform = hoverTransform;
+  const hoverShadow = shadowString(first(effects.hoverShadow, effects.shadowHover, animation.hoverShadow));
+  if (hoverShadow && !hover['box-shadow']) hover['box-shadow'] = hoverShadow;
+  push('surface', 'hover', { ...hover });
+  push('button', 'hover', { ...hover });
+
+  // The ring on focus, as written — a `0 0 0 3px rgba(…)` is a shadow, and its colour is
+  // the file's, not a guess from the accent.
+  const focusBlocks = [object(effects.focus), object(source.interaction?.focus), object(source.focus)].filter(Boolean);
+  const ring = shadowString(first(...focusBlocks.map((b) => first(b.ring, b.focusRing, b.shadow, b.boxShadow, b.glow)),
+    effects.focusRing, effects.focusGlow));
+  if (ring) {
+    push('field', 'focus', { 'box-shadow': ring });
+    push('button', 'focus', { 'box-shadow': ring });
+  }
+
+  // An accent with a hover of its own is the button's hover and the link's.
+  const palette = object(source.palette) ?? object(source.colors) ?? object(source.colours) ?? {};
+  const accentHover = coerce('color', first(palette.accentHover, palette.primaryHover, palette.brandHover, palette.linkHover));
+  if (accentHover) {
+    push('button', 'hover', { 'background-color': accentHover });
+    push('link', 'hover', { color: accentHover });
+  }
+
+  // The named materials, as declarations. A `default` material is every surface; whatever
+  // `floats` is the modal and the popover; a `strong` one is the modal. Anything else is a
+  // name for an element block to point at, below.
+  const materials = materialBlocks(source);
+  const materialRule = (name, target) => {
+    const block = materials[name];
+    if (!block) return;
+    const { base, states } = readDeclarations(block, target);
+    push(target, null, base);
+    for (const [state, properties] of Object.entries(states)) push(target, state, properties);
+  };
+  for (const name of ['default', 'base', 'card', 'panel']) if (materials[name]) { materialRule(name, 'surface'); break; }
+  for (const name of ['strong', 'elevated', 'raised']) if (materials[name]) { materialRule(name, 'modal'); break; }
+  if (materials.floating) { materialRule('floating', 'modal'); materialRule('floating', 'popover'); }
+
+  // A surface for readers who have asked their system for less transparency: the file
+  // names the opaque fill it falls back to, and the blur goes with it.
+  const reduced = object(source.accessibility?.reducedTransparency);
+  const fallback = coerce('background-color', first(reduced?.fallbackSurface, reduced?.surface, reduced?.background));
+  if (fallback) {
+    push('surface', null, { 'background-color': fallback, 'backdrop-filter': 'none' },
+      { media: '@media (prefers-reduced-transparency: reduce)' });
+  }
+
+  // ── Each kind of element ─────────────────────────────────────────────────────────────
+
+  // A block that points at a material is that material with its own words on top. The
+  // pointer itself is not a declaration and is left out of what is read.
+  const resolved = (value) => {
+    const named = typeof value.material === 'string' ? materials[value.material.toLowerCase()] : null;
+    if (!named) return value;
+    const merged = { ...named, ...value };
+    // An element that names a material and restates only its blur means the material's
+    // filter chain at that blur — `blur(30px) saturate(135%)` — not a bare blur in its place.
+    const chain = first(named.backdropFilter, named.backdrop, named.filter);
+    const own = first(value.blur, value.backdropBlur);
+    const bare = own != null && !/\(/.test(String(own)) ? String(own).trim().replace(/px$/i, '') : null;
+    if (typeof chain === 'string' && /blur\(/i.test(chain) && bare && /^\d*\.?\d+$/.test(bare)) {
+      merged.backdropFilter = chain.replace(/blur\([^)]*\)/i, `blur(${bare}px)`);
+      delete merged.blur;
+      delete merged.backdropBlur;
+      delete merged.webkitBackdropFilter;
+    }
+    return merged;
+  };
+  const rulesFor = (target, block, state = null) => {
+    const { base, states } = readDeclarations(block, target);
+    push(target, state, base);
+    for (const [s, properties] of Object.entries(states)) {
+      // A secondary button's hover is its own state, not the primary's.
+      const name = state === 'secondary' ? (s === 'hover' ? 'secondaryHover' : null) : s;
+      if (name) push(target, name, properties);
+    }
+  };
+
+  const blocks = [source.components, source.elements, source].filter((b) => b && typeof b === 'object');
+  for (const block of blocks) {
+    const words = Object.keys(block).map((k) => k.toLowerCase().replace(/[\s_-]+/g, ''));
+    const hasPrimary = words.some((w) => PRIMARY_BUTTON_WORDS.has(w));
+    for (const [key, value] of Object.entries(block)) {
+      const target = targetOf(key);
+      if (!target) continue;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const flat = key.toLowerCase().replace(/[\s_-]+/g, '');
+      // `text: { color, headingColor }` is the body's ink and the headings' ink at once.
+      if (target === 'body' && flat === 'text') {
+        const c = coerce('color', value.color);
+        if (c) push('body', null, { color: c });
+        const h = coerce('color', value.headingColor ?? value.heading);
+        if (h) push('heading', null, { color: h });
+        continue;
+      }
+
+      // A plain `button` beside a `primaryButton` is the other kind of button, and a
+      // block that calls itself the secondary one is that whatever it sits beside.
+      if (target === 'button' && ((hasPrimary && PLAIN_BUTTON_WORDS.has(flat)) || SECONDARY_BUTTON_WORDS.has(flat))) {
+        rulesFor('button', resolved(variantOf(value, target)), 'secondary');
+        continue;
+      }
+
+      rulesFor(target, resolved(variantOf(value, target)));
+
+      // The variants a buttons block keeps beside its primary: the first that describes
+      // a button other than the call to action is the secondary button.
+      if (target === 'button' && isNested(value)) {
+        const variant = SECONDARY_VARIANTS.map((n) => object(value[n])).find(Boolean);
+        if (variant) rulesFor('button', resolved(variant), 'secondary');
+      }
+
+      // A table's pieces: its header row and its body rows, each with states of its own.
+      if (target === 'table') {
+        const parts = { header: first(value.header, value.head, value.thead, value.th), row: first(value.row, value.rows, value.tr, value.td, value.cell) };
+        for (const [part, piece] of Object.entries(parts)) {
+          if (!object(piece)) continue;
+          const { base, states } = readDeclarations(piece, target);
+          push('table', null, base, { part });
+          for (const [s, properties] of Object.entries(states)) push('table', s, properties, { part });
+        }
+      }
+    }
+  }
 
   return rules;
 }
@@ -554,6 +784,7 @@ export function readSelectorRules(source) {
         target: targetOf(entry.target ?? entry.role) ?? undefined,
         selector: typeof entry.selector === 'string' ? entry.selector : undefined,
         state: entry.state ?? undefined,
+        part: entry.part ?? undefined,
         media: entry.media ?? undefined,
         properties: decls,
       });
@@ -598,7 +829,9 @@ export function normaliseRule(raw) {
     : null;
   if (!target && !selector) return null;
 
-  const state = RULE_STATES.includes(raw.state) ? raw.state : null;
+  let state = RULE_STATES.includes(raw.state) ? raw.state : null;
+  if (state && BUTTON_ONLY_STATES.has(state) && target !== 'button') state = null;
+  const part = target && RULE_PARTS[target]?.includes(raw.part) ? raw.part : null;
   const media = typeof raw.media === 'string' && isSafeMedia(raw.media) ? raw.media.trim().replace(/\s+/g, ' ') : null;
 
   const properties = {};
@@ -613,7 +846,7 @@ export function normaliseRule(raw) {
   }
   if (!Object.keys(properties).length) return null;
 
-  return { target, selector, state, media, properties };
+  return { target, selector, state, part, media, properties };
 }
 
 /**
@@ -629,7 +862,7 @@ export function normaliseRules(list) {
   for (const raw of Array.isArray(list) ? list : []) {
     const rule = normaliseRule(raw);
     if (!rule) continue;
-    const key = `${rule.target ?? `s:${rule.selector}`}|${rule.state ?? ''}|${rule.media ?? ''}`;
+    const key = `${rule.target ?? `s:${rule.selector}`}|${rule.part ?? ''}|${rule.state ?? ''}|${rule.media ?? ''}`;
     const existing = index.get(key);
     if (existing) {
       Object.assign(existing.properties, rule.properties);
@@ -653,7 +886,7 @@ export function normaliseDetect(raw) {
   if (!raw || typeof raw !== 'object') return out;
   for (const [key, value] of Object.entries(raw)) {
     const target = targetOf(key);
-    if (!target || target === 'body' || target === 'heading' || target === 'link') continue;
+    if (!target || ['body', 'heading', 'link', 'small'].includes(target)) continue;
     const list = (Array.isArray(value) ? value : [value])
       .filter((s) => typeof s === 'string' && isSafeSelector(s))
       .map((s) => s.trim().replace(/\s+/g, ' '))
@@ -670,7 +903,8 @@ export function readTransition(source) {
   const motion = source.motion ?? source.animation ?? source.interaction ?? {};
   const inner = motion.default ?? motion.base ?? motion;
 
-  let value = effects.transition ?? motion.transition ?? source.transition ?? null;
+  let value = effects.transition ?? motion.transition ?? source.transition
+    ?? effects.hover?.transition ?? motion.hover?.transition ?? source.interaction?.transition ?? null;
   if (typeof value !== 'string' && inner && typeof inner === 'object') {
     const duration = inner.duration ?? inner.speed;
     const easing = inner.easing ?? inner.ease ?? inner.curve;

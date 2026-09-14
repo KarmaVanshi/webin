@@ -304,6 +304,12 @@ export class ThemeEngine {
         ? mapping.backgrounds.get(original) === mapping.accent
         : onAccentAbove;
       if (onAccent) marks.push(Mark.ON_ACCENT);
+      // A button whose own fill was the page's accent is its call to action. The mark is
+      // what lets a theme's `secondary` button rule find every other button, and it is
+      // decided here, from the page, before any rule repaints the fill.
+      if (role === 'button' && opaque && original != null && mapping.backgrounds.get(original) === mapping.accent) {
+        marks.push(Mark.PRIMARY);
+      }
 
       // Only a box that paints its own opaque, non-canvas background is a card. Shadows,
       // blur and forced borders apply to those and nothing else — putting a drop shadow on
@@ -518,7 +524,7 @@ function wantedRoles(theme) {
 function ruleFills(theme) {
   const out = {};
   for (const rule of theme.rules ?? []) {
-    if (!rule.target || rule.state || rule.media) continue;
+    if (!rule.target || rule.state || rule.part || rule.media) continue;
     const entry = out[rule.target] ?? (out[rule.target] = { bg: null, color: null, painted: false });
     const bg = rule.properties['background-color'];
     if (bg) { entry.bg = parseColor(bg); entry.painted = true; }
@@ -873,6 +879,15 @@ const STATE_SUFFIX = {
   active: ':active',
   focus: ':focus-visible',
   placeholder: '::placeholder',
+  // Every button that was not the page's call to action; see `Mark.PRIMARY`.
+  secondary: `:not([${TOKEN_ATTR}~="pr"])`,
+  secondaryHover: `:not([${TOKEN_ATTR}~="pr"]):hover`,
+};
+
+/** The pieces of a table a rule may be for, inside the table's own mark. */
+const PART_SUFFIX = {
+  header: ' :is(thead, th)',
+  row: ' tbody tr',
 };
 const CURRENT = ['[aria-current]', '[aria-selected="true"]', '[aria-pressed="true"]',
   '.active', '.is-active', '.selected', '.current'];
@@ -883,7 +898,7 @@ const CURRENT = ['[aria-current]', '[aria-selected="true"]', '[aria-pressed="tru
  * Roles and surfaces are their marks; the page's furniture is its own tag. A link rule is
  * held back from links on an accent fill, which have to keep the accent's ink or vanish.
  */
-function targetSelector(target, state, used) {
+function targetSelector(target, state, used, part = null) {
   const attr = (mark) => `[${TOKEN_ATTR}~="${mark}"]`;
   let bases;
   if (target === 'surface') {
@@ -898,10 +913,17 @@ function targetSelector(target, state, used) {
     bases = HEADINGS.split(', ');
   } else if (target === 'link') {
     bases = [`a:not(${attr(Mark.ON_ACCENT)})`];
+  } else if (target === 'small') {
+    bases = ['small', 'figcaption'];
   } else {
     return null;
   }
 
+  if (part) {
+    const inside = PART_SUFFIX[part];
+    if (!inside) return null;
+    bases = bases.map((base) => `${base}${inside}`);
+  }
   if (!state) return bases.join(', ');
   if (state === 'current') {
     // A nav is current *inside* itself; a link or a button is current itself.
@@ -918,7 +940,7 @@ function targetRuleCss(theme, used) {
   const list = (theme.rules ?? []).filter((rule) => rule.target);
   const ordered = [...list.filter((r) => !r.state), ...list.filter((r) => r.state)];
   for (const rule of ordered) {
-    const selector = targetSelector(rule.target, rule.state, used);
+    const selector = targetSelector(rule.target, rule.state, used, rule.part ?? null);
     if (!selector) continue;
     const inner = `${selector} { ${declarations(rule.properties)} }`;
     out.push(rule.media ? `${rule.media} { ${inner} }` : inner);
@@ -1009,10 +1031,14 @@ function paintedSurface(theme) {
 function surfaceSpec(theme, name = null) {
   const base = {
     shadow: theme.shadow,
+    shadowCss: theme.effects.shadowCss ?? null,
     borderWidth: theme.effects.borderWidth,
     blur: theme.effects.blur,
+    saturate: theme.effects.saturate ?? null,
+    brighten: theme.effects.brighten ?? null,
     surfaceAlpha: theme.effects.surfaceAlpha,
     gradient: theme.effects.gradient,
+    sheen: theme.effects.sheen ?? null,
     radius: theme.radius,
   };
   const material = name ? theme.materials?.[name] : null;
@@ -1025,7 +1051,13 @@ function surfaceCss(theme, mapping, spec = surfaceSpec(theme)) {
   const out = [];
   const border = spec.borderWidth;
 
-  switch (spec.shadow) {
+  // A shadow the file wrote out is the theme's shadow, whatever kind the theme was read
+  // as; `none` is the file saying so, and the kind's default would contradict it.
+  if (spec.shadowCss) {
+    out.push(`box-shadow: ${spec.shadowCss} !important;`);
+    if (spec.shadow === 'glass') out.push(`border: 1px solid ${p.border} !important;`);
+    if (spec.shadow === 'neu') out.push('border-color: transparent !important;');
+  } else switch (spec.shadow) {
     case 'hard':
       out.push(`box-shadow: 4px 4px 0 0 ${p.border} !important;`);
       break;
@@ -1050,10 +1082,17 @@ function surfaceCss(theme, mapping, spec = surfaceSpec(theme)) {
   }
 
   if (spec.blur) {
-    out.push(`backdrop-filter: blur(${spec.blur}px) !important;`);
-    out.push(`-webkit-backdrop-filter: blur(${spec.blur}px) !important;`);
+    // Saturation and brightness ride in the same filter chain, when the theme names them:
+    // the frosted look most glass themes describe is a blur *and* a lift in saturation.
+    const chain = [`blur(${spec.blur}px)`];
+    if (spec.saturate != null && spec.saturate !== 100) chain.push(`saturate(${spec.saturate}%)`);
+    if (spec.brighten != null && spec.brighten !== 100) chain.push(`brightness(${spec.brighten}%)`);
+    out.push(`backdrop-filter: ${chain.join(' ')} !important;`);
+    out.push(`-webkit-backdrop-filter: ${chain.join(' ')} !important;`);
   }
-  if (spec.gradient) {
+  if (spec.sheen) {
+    out.push(`background-image: ${spec.sheen} !important;`);
+  } else if (spec.gradient) {
     out.push(`background-image: ${SHEEN} !important;`);
   }
   if (border != null && spec.shadow !== 'glass' && spec.shadow !== 'neu') {
@@ -1135,7 +1174,8 @@ function stateCss(theme, used) {
       const ink = theme.dark ? '255, 255, 255' : '0, 0, 0';
       const wash = `rgba(${ink}, ${s.lift})`;
       const overlay = `linear-gradient(${wash}, ${wash})`;
-      declarations.push(`background-image: ${theme.effects.gradient ? `${overlay}, ${SHEEN}` : overlay} !important;`);
+      const sheen = theme.effects.sheen ?? (theme.effects.gradient ? SHEEN : null);
+      declarations.push(`background-image: ${sheen ? `${overlay}, ${sheen}` : overlay} !important;`);
     }
     if (s.border != null) {
       declarations.push(`border-color: ${mix(p.border, p.text, s.border)} !important;`);

@@ -127,6 +127,11 @@ export const Mark = Object.freeze({
   /** The element paints its own opaque background: a card, bar, or panel. */
   SURFACE: 'sf',
   /**
+   * A button whose own fill was the page's accent: its call to action. A theme that
+   * describes a secondary button is describing every button without this mark.
+   */
+  PRIMARY: 'pr',
+  /**
    * The readability guarantee. Text that fails contrast against what is actually painted
    * behind it is forced to black or white, whichever wins. Two marks, two rules, however
    * many elements need them.

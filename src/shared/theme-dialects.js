@@ -220,7 +220,7 @@ function readRoles(source, materials) {
  */
 function readStates(source) {
   const hoverBlocks = [
-    source.motion?.hover, source.effects?.hover, source.transitions?.hover,
+    source.motion?.hover, source.effects?.hover, source.transitions?.hover, source.interaction?.hover,
     source.cards?.hover, source.card?.hover,
     source.elements?.button?.hover, source.buttons?.primary, source.button?.hover,
   ].filter((block) => block && typeof block === 'object');
@@ -243,6 +243,11 @@ function readStates(source) {
     // A lift written as a movement is a movement; the engine's own lift is the light, and
     // the travel is the scale, so a `translateY` only says that something should happen.
     if (out.lift == null && typeof pick(block, ['transform', 'lift']) === 'string') out.lift = 0.06;
+    // Or as the amount itself: `backgroundIncrease: 0.025` is how much lighter it goes.
+    const stated = pick(block, ['backgroundIncrease', 'lighten', 'brighten', 'lift']);
+    if (out.lift == null && typeof stated === 'number' && stated > 0 && stated < 1) out.lift = stated;
+    const edge = pick(block, ['borderIncrease']);
+    if (out.border == null && typeof edge === 'number' && edge > 0 && edge < 1) out.border = edge;
     if (out.border == null && pick(block, ['border', 'borderColor']) != null) out.border = 0.14;
   }
 
@@ -268,18 +273,27 @@ function readStates(source) {
  * fills in once the palette is settled.
  */
 function readBackdrop(source) {
-  const raw = pick(source, ['backgroundStyle', 'background', 'backdrop', 'canvas']);
-  if (!raw || typeof raw !== 'object') return null;
+  let raw = pick(source, ['backgroundStyle', 'background', 'backdrop', 'canvas']);
+  // A gradient written as the whole answer — `background: "linear-gradient(…)"`, or under
+  // the effects — is the page's ground with nothing else said about it.
+  if (!raw || typeof raw !== 'object') {
+    const bare = [raw, source.effects?.background, source.effects?.backdrop, source.effects?.pageBackground,
+      source.effects?.pageGradient].find((v) => typeof v === 'string' && isGradient(v));
+    raw = bare ? { value: bare } : null;
+  }
+  if (!raw) return null;
 
   const written = [pick(raw, ['overlay']), pick(raw, ['value', 'image', 'gradient', 'css'])]
     .filter((layer) => typeof layer === 'string' && isGradient(layer));
   const named = pick(raw, ['base', 'color', 'backgroundColor', 'from']);
   const base = named && parseColor(named) ? named : null;
-  if (written.length) return { base, blobs: [], css: written };
-  if (!base) return null;
+  if (!base && !written.length) return null;
 
+  // The blobs floating over the ground, whatever the file calls them. They are kept beside
+  // a written gradient rather than dropped for it: a file that paints a sky and then a
+  // patch of sunlight over it has said two things, not one.
   const blobs = [];
-  const layers = Array.isArray(raw.layers) ? raw.layers : [];
+  const layers = [raw.layers, raw.atmosphere, raw.blobs, raw.orbs, raw.glows, raw.lights].find(Array.isArray) ?? [];
   for (const layer of layers.slice(0, 4)) {
     if (!layer || typeof layer !== 'object') continue;
     const colour = atOpacity(pick(layer, ['color', 'background', 'fill']), layer.opacity);
@@ -301,6 +315,7 @@ function readBackdrop(source) {
     });
   }
 
+  if (written.length) return { base, blobs, css: written };
   return blobs.length ? { base, blobs } : null;
 }
 
@@ -345,6 +360,25 @@ export function readDialect(source) {
 
   const rawEffects = source.effects ?? {};
 
+  // The theme's one shadow, when the file wrote it out rather than naming a kind. `none`
+  // is as much an answer as a value: a flat theme has said it has no shadow, and the
+  // engine's soft default is not what it said.
+  const shadowWritten = pick(rawEffects, ['shadow', 'boxShadow', 'softShadow', 'cardShadow', 'elevation']);
+  const shadowCss = typeof shadowWritten === 'string' && (/\d/.test(shadowWritten) || /^\s*none\s*$/i.test(shadowWritten))
+    ? shadowWritten.trim()
+    : (shadowWritten === false || shadowWritten === 0 ? 'none' : null);
+
+  // The sheen over a surface, when the file drew it: a specular gradient, an edge light.
+  const sheen = [rawEffects.specular?.gradient, rawEffects.gradients?.surface, rawEffects.surfaceGradient,
+    rawEffects.sheen, rawEffects.edgeReflection?.gradient]
+    .find((v) => typeof v === 'string' && isGradient(v)) ?? null;
+
+  // Grain, under any of its names, unless the file says there is none.
+  const texture = [rawEffects.texture, rawEffects.grain, source.graphics?.noise, source.graphics?.texture,
+    source.decoration?.texture, source.decorations?.texture, source.texture]
+    .find((v) => v != null && v !== '');
+  const grain = typeof texture === 'string' ? !/^(none|off|false|0)$/i.test(texture.trim()) : enabled(texture);
+
   // Everything the file says about each kind of element, and about its own selectors.
   const named = readSelectorRules(source);
   const rules = [...readComponentRules(source), ...readChromeRules(source), ...named.rules];
@@ -361,12 +395,17 @@ export function readDialect(source) {
     shadow: blur > 0 ? 'glass' : undefined,
     effects: {
       blur,
+      saturate: px(pick(rawEffects, ['saturation', 'saturate', 'backdropSaturation'])),
+      brighten: px(pick(rawEffects, ['brightness', 'brighten', 'backdropBrightness'])),
+      shadowCss,
+      sheen,
       borderWidth: borderWidthOf(pick(rawEffects, ['borderWidth', 'border']))
         ?? surfaces.map((m) => m.borderWidth).find((v) => v != null) ?? null,
+      borderOpacity: px(pick(rawEffects, ['borderOpacity', 'borderAlpha'])),
       surfaceAlpha: surfaces.map((m) => m.surfaceAlpha).find((v) => v != null) ?? null,
       gradient: enabled(rawEffects.specular) || enabled(rawEffects.gradients?.surface)
         || enabled(rawEffects.edgeReflection) || enabled(rawEffects.innerHighlight),
-      noise: enabled(rawEffects.noise) || enabled(source.illustration?.texture),
+      noise: enabled(rawEffects.noise) || enabled(source.illustration?.texture) || grain,
       glow: enabled(rawEffects.glow) || enabled(source.decorations?.particles)
         || enabled(source.decorations?.fireflies),
       tracking: em(pick(heading, ['letterSpacing']) ?? pick(typography, ['headingLetterSpacing'])

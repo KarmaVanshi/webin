@@ -4,7 +4,7 @@ import { makeDom, stubLayout, stubRects } from './helpers.mjs';
 
 import { buildMapping, buildCss, rootCss, withAlpha, mix, ThemeEngine } from '../src/content/engine.js';
 import { detectTokens, Role } from '../src/content/tokens.js';
-import { normaliseTheme } from '../src/shared/theme-format.js';
+import { normaliseTheme, parseThemeInput } from '../src/shared/theme-format.js';
 import { presetById } from '../src/themes/library.js';
 import { TOKEN_ATTR, OWNED_ATTR } from '../src/shared/types.js';
 import { contrastRatio, parseColor } from '../src/shared/color.js';
@@ -547,6 +547,7 @@ function fullDom() {
       <div id="card" class="product-tile" style="background-color:#f2f2f2">A card</div>
       <button id="btn">Go</button>
       <input id="text" type="text" placeholder="Search">
+      <table id="tbl"><thead><tr><th>Name</th></tr></thead><tbody><tr><td>Row</td></tr></tbody></table>
       <aside id="side">Side</aside>
     </main>
   </body></html>`);
@@ -640,4 +641,136 @@ test('the theme\'s rules survive a round trip through its own file format', asyn
   assert.deepEqual(back.effects.backdrop, theme.effects.backdrop);
   const decoded = await decodeShareCode(await encodeShareCode(theme));
   assert.deepEqual(normaliseTheme(decoded).rules, theme.rules);
+});
+
+// ── Every file in themes/ renders in full ───────────────────────────────────
+// The files in that folder are the importer's acceptance suite: what each one says, the
+// page shows. A declaration that is read but never painted is a bug, not a limitation.
+
+test('brutalist02: a shadow the file sets to none is none everywhere, the nav included', () => {
+  const theme = themeFile('brutalist02');
+  assert.equal(theme.effects.shadowCss, 'none');
+  const dom = fullDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(theme, pageTokens());
+  assert.match(engine.css, /\[data-webin~="nv"\] \{ box-shadow: none !important/, 'not the engine\'s soft default');
+  assert.ok(!engine.css.includes('0 6px 20px rgba(0, 0, 0, 0.08)'), 'the soft shadow appears nowhere');
+});
+
+test('90s: the card shadow beats the theme shadow, and the theme shadow is what everything else gets', () => {
+  const theme = themeFile("90's-com-graph");
+  assert.equal(theme.effects.shadowCss, '3px 3px 0px #000000');
+  assert.equal(theme.effects.noise, true, '`graphics.noise: "subtle"` and a CRT texture are grain');
+  const dom = fullDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(theme, pageTokens());
+  const css = engine.css;
+  assert.match(css, /\[data-webin~="sf"\] \{[^}]*box-shadow: 4px 4px 0px #000000 !important/, '`components.card.shadow`');
+  assert.match(css, /\[data-webin~="fd"\] \{ box-shadow: 3px 3px 0px #000000 !important/, 'a field has no shadow of its own, so it has the theme\'s');
+  assert.match(css, /\[data-webin~="bt"\] \{[^}]*border: 2px outset #ffffff !important/);
+  assert.match(css, /h1, h2, h3, h4, h5, h6 \{ text-shadow: 0 0 8px rgba\(0,255,102,0\.35\) !important; \}/, '`effects.glow` as written');
+  assert.match(css, /body \{[^}]*background-image: url\("data:image\/svg\+xml/, 'grain over the canvas');
+});
+
+test('ghibli: body weight, border opacity, the hover lift as written, and the secondary button', () => {
+  const theme = themeFile('ghibli');
+  assert.equal(theme.palette.border, 'rgba(200, 207, 177, 0.55)', '`effects.borderOpacity` on the palette\'s edge');
+  const dom = fullDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(theme, pageTokens());
+  const css = engine.css;
+  assert.match(css, /body \{[^}]*font-weight: 400 !important/, '`typography.fontWeight`');
+  assert.match(css, /\[data-webin~="sf"\]:hover \{ transform: translateY\(-2px\) !important; box-shadow: 0 14px 36px rgba\(80, 92, 70, 0\.22\) !important; \}/,
+    '`animation.hoverTransform` and `effects.hoverShadow`');
+  assert.match(css, /\[data-webin~="bt"\]:not\(\[data-webin~="pr"\]\) \{ background-color: #f4d5a5 !important; color: #4e5a46 !important; \}/,
+    '`components.buttonSecondary`');
+  assert.match(css, /\[data-webin~="bt"\]:not\(\[data-webin~="pr"\]\):hover \{ background-color: #edc48c !important; \}/);
+  assert.match(css, /h1, h2, h3, h4, h5, h6 \{ text-shadow: 0 0 22px rgba\(244, 213, 165, 0\.25\) !important; \}/);
+});
+
+test('anime-sth2: the card shadow beats the soft shadow, the blobs sit over the gradient, the secondary button renders', () => {
+  const theme = themeFile('anime-sth2');
+  const dom = fullDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(theme, pageTokens());
+  const css = engine.css;
+  assert.match(css, /\[data-webin~="sf"\] \{[^}]*box-shadow: 0 10px 30px rgba\(75, 88, 65, 0\.10\) !important/, '`card.shadow`, not `effects.softShadow`');
+  assert.match(css, /html \{ background: radial-gradient\([^)]*rgba\(246, 217, 139, 0\.28\)[^;]*linear-gradient\(160deg, #A9D4E8/,
+    'the atmosphere layers are painted, above the written gradient');
+  assert.match(css, /\[data-webin~="bt"\]:not\(\[data-webin~="pr"\]\) \{ background-color: #f6d98b !important; color: #4b543f !important; border-radius: 16px !important; \}/);
+  assert.match(css, /\[data-webin~="bt"\]:hover \{[^}]*transform: translateY\(-2px\) !important/, '`motion.hover.translateY`');
+});
+
+test('anime: a gradient under `effects.background` is the page\'s ground', () => {
+  const theme = themeFile('anime.webin');
+  const dom = fullDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(theme, pageTokens());
+  assert.match(engine.css, /html \{ background: linear-gradient\(135deg, rgba\(116, 80, 180, 0\.14\) 0%[^;]*, #0d0b1c !important/);
+});
+
+test('glass: materials render as written, elements that name one get it, tables have parts', () => {
+  const theme = themeFile('glass-theme.original');
+  assert.equal(theme.effects.saturate, 145);
+  assert.equal(theme.effects.brighten, 102);
+  assert.match(theme.effects.sheen, /^linear-gradient\(135deg, rgba\(255,255,255,0\.22\)/, '`effects.specular.gradient`');
+  const dom = fullDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(theme, pageTokens());
+  const css = engine.css;
+
+  assert.match(css, /\[data-webin~="sf"\] \{[^}]*backdrop-filter: blur\(28px\) saturate\(145%\) brightness\(102%\) !important/, 'the levers, composed');
+  assert.match(css, /\[data-webin~="sf"\] \{[^}]*background-image: linear-gradient\(135deg, rgba\(255,255,255,0\.22\)/, 'the sheen, as drawn');
+  assert.match(css, /\[data-webin~="sf"\] \{[^}]*box-shadow: 0 12px 40px rgba\(0,0,0,0\.18\), inset 0 1px 0 rgba\(255,255,255,0\.14\) !important/, '`material.default.boxShadow`');
+  assert.match(css, /\[data-webin~="sf"\] \{[^}]*border: 0\.5px solid rgba\(255, 255, 255, 0\.18\) !important/);
+  assert.match(css, /\[data-webin~="nv"\] \{[^}]*backdrop-filter: blur\(30px\) saturate\(135%\) !important/,
+    'the nav is the soft material at its own blur');
+  assert.match(css, /\[data-webin~="nv"\] \{[^}]*box-shadow: 0 8px 30px rgba\(0,0,0,0\.12\), inset 0 1px 0 rgba\(255,255,255,0\.08\) !important/);
+  assert.match(css, /\[data-webin~="tb"\] :is\(thead, th\) \{ background-color: rgba\(255, 255, 255, 0\.07\) !important; backdrop-filter: blur\(24px\) !important/);
+  assert.match(css, /\[data-webin~="tb"\] tbody tr \{ background-color: rgba\(255, 255, 255, 0\.025\) !important; \}/);
+  assert.match(css, /\[data-webin~="tb"\] tbody tr:hover \{ background-color: rgba\(255, 255, 255, 0\.065\) !important; \}/);
+  assert.match(css, /\[data-webin~="bt"\]:not\(\[data-webin~="pr"\]\) \{ background-color: rgba\(255, 255, 255, 0\.075\) !important/, 'the plain button beside `primaryButton`');
+  assert.match(css, /\[data-webin~="bt"\]:focus-visible \{ box-shadow: 0 0 0 3px rgba\(10,132,255,0\.18\) !important; \}/, '`interaction.focus.ring`');
+  assert.match(css, /a:not\(\[data-webin~="on"\]\):hover \{ color: #409cff !important; \}/, '`palette.accentHover`');
+  assert.match(css, /@media \(prefers-reduced-transparency: reduce\) \{ \[data-webin~="sf"\] \{ background-color: rgba\(25, 25, 30, 0\.96\) !important; backdrop-filter: none !important/);
+  assert.match(css, /transition: all 180ms cubic-bezier\(0\.2,0\.8,0\.2,1\) !important/, '`interaction.transition`');
+  assert.ok(!css.includes('url('), 'and still nothing can fetch');
+});
+
+test('a button that was the page\'s call to action is primary; the secondary rule leaves it alone', () => {
+  const dom = makeDom(`<html><body style="background-color:#ffffff">
+    <button id="cta" style="background-color:#1a73e8">Buy</button>
+    <button id="plain" style="background-color:#f2f2f2">Cancel</button>
+  </body></html>`);
+  stubLayout(dom, { width: 120, height: 40 });
+  const theme = themeFile('ghibli');
+  new ThemeEngine({ doc: dom.window.document, view: dom.window }).apply(theme, pageTokens());
+  assert.ok(marksOf(dom, 'cta').includes('pr'), 'the accent-filled button is marked primary');
+  assert.ok(!marksOf(dom, 'plain').includes('pr'), 'the grey one is not, so `:not([data-webin~="pr"])` finds it');
+});
+
+test('the new rule shapes survive a round trip through the file format', async () => {
+  const { themeToFile } = await import('../src/shared/theme-format.js');
+  const theme = themeFile('glass-theme.original');
+  const back = normaliseTheme(themeToFile(theme));
+  assert.deepEqual(back.rules, theme.rules, 'parts, secondary states and media rules included');
+  assert.equal(back.effects.shadowCss, theme.effects.shadowCss);
+  assert.equal(back.effects.sheen, theme.effects.sheen);
+  assert.equal(back.effects.saturate, theme.effects.saturate);
+  const flat = themeFile('brutalist02');
+  assert.equal(normaliseTheme(themeToFile(flat)).effects.shadowCss, 'none');
+});
+
+test('anime-sth: its sunset and its night are themes of their own, and its small print renders', () => {
+  const text = readFileSync(new URL('../themes/anime-sth.json', import.meta.url), 'utf8');
+  const { themes } = parseThemeInput(text);
+  assert.deepEqual(themes.map((t) => t.name), ['Whispering Forest', 'Whispering Forest — Sunset', 'Whispering Forest — Night']);
+  assert.equal(themes[2].dark, true);
+
+  const dom = makeDom('<html><body><p>Body <small id="s">fine print</small></p><figure><figcaption>cap</figcaption></figure></body></html>');
+  stubLayout(dom);
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(themes[0], pageTokens());
+  assert.match(engine.css, /small, figcaption \{ font-family: Nunito !important; font-weight: 500 !important; color: #71806d !important; \}/,
+    '`typography.small`');
 });

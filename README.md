@@ -227,6 +227,24 @@ on a black button stays white. Every declaration, read or written, goes through 
 gate as the editor's: the property allowlist and the value checks, no `url()`, no way to
 close a declaration. Reading widely is not trusting widely.
 
+The general statement is read before the specific one, so the specific one wins: a
+`cards.shadow` beats `effects.shadow`, and `effects.shadow` — kept as written, `none`
+included — is what every other surface, bar, button and field gets instead of the
+engine's soft default. A file's named materials render as written too, and an element
+that names one (`modal: { material: "strong" }`) is that material with its own words on
+top. A `buttons.secondary` (or a `button` beside a `primaryButton`) styles every button
+that was not the page's call to action — the engine marks a button whose own fill was the
+page's accent as primary. A table's `header` and `row` are rules of their own. A glow
+written as a shadow is the headings' bloom; a `shadows` scale is a card, a modal and a
+popover; a hover written as `translateY(-2px)` moves; a focus `ring` is drawn in the
+colour the file gave it; `accentHover` is the button's and the link's hover; `saturation`
+and `brightness` ride in the backdrop filter beside the blur; a `specular` gradient is the
+sheen; a `reducedTransparency` fallback becomes the media rule it describes; the small
+print (`typography.small`) lands on `<small>` and figure captions. A file that carries its
+night beside its day — `special.nightMode`, a `sunsetMode` that recolours the sky — has
+described a second theme, and the importer offers it as one. The files under `themes/`
+are the acceptance suite for all of this: each one renders in full.
+
 All of it is opt-in. A theme that declares no roles and carries no rules emits nothing for
 them and stamps nothing for them, which is why the eighteen shipped presets are untouched.
 

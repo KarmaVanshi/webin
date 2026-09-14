@@ -303,3 +303,44 @@ test('a ground that had to be guessed at is reported before anything is saved', 
   assert.ok(inferred.some((note) => note.startsWith('background ←')),
     'the preview can say the canvas was worked out rather than read');
 });
+
+// ── The other modes a file carries ──────────────────────────────────────────
+
+import { parseThemeInput as parseInput, modeVariants } from '../src/shared/theme-format.js';
+
+test('a night mode in the file is a second theme, not a note about the first', () => {
+  const { themes } = parseInput(JSON.stringify({
+    theme: {
+      name: 'Meadow',
+      palette: { background: '#F4EEDB', surface: '#FFFDF3', text: '#39483B', accent: '#527A5B' },
+      buttons: { background: '#527A5B', text: '#fff' },
+      special: {
+        nightMode: { enabled: true, background: '#182B2A', surface: 'rgba(31, 52, 49, 0.82)', text: '#F4EEDB', accent: '#E6C77A', moonGlow: 'rgba(246,217,139,0.22)' },
+        loud: { enabled: false, background: '#ff0000' },
+      },
+    },
+  }));
+  assert.equal(themes.length, 2);
+  const [day, night] = themes;
+  assert.equal(day.dark, false);
+  assert.equal(day.palette.background, '#f4eedb', 'the night\'s colours stay out of the day');
+  assert.equal(night.name, 'Meadow — Night');
+  assert.equal(night.dark, true);
+  assert.equal(night.palette.background, '#182b2a');
+  assert.equal(night.palette.accent, '#e6c77a');
+  assert.equal(night.palette.surface, 'rgba(31, 52, 49, 0.82)');
+  assert.deepEqual(night.rules, day.rules, 'everything else the file said comes with it');
+});
+
+test('a mode that names the layers of the page gradient recolours them', () => {
+  const variants = modeVariants({
+    name: 'Meadow',
+    palette: { background: '#F4EEDB', text: '#39483B' },
+    background: { base: '#F4EEDB', layers: [{ type: 'sky', color: '#A9D4E8', position: 'top' }, { type: 'sunlight', color: '#F6D98B' }] },
+    special: { sunsetMode: { sky: '#E8B6A1', sun: '#FFB347', meadow: '#71836A' } },
+  });
+  assert.equal(variants.length, 1);
+  assert.equal(variants[0].name, 'Meadow — Sunset');
+  assert.deepEqual(variants[0].background.layers.map((l) => l.color), ['#E8B6A1', '#FFB347'], '`sun` is the sunlight layer');
+  assert.equal(variants[0].special, undefined, 'and the variant does not carry the modes again');
+});

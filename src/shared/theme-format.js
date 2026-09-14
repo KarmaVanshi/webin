@@ -12,10 +12,11 @@
  * extra steps.
  */
 
-import { parseColor, toCss } from './color.js';
+import { parseColor, toCss, luminance } from './color.js';
 import { adaptForeignThemes, completePalette } from './foreign-themes.js';
 import { readDialect } from './theme-dialects.js';
 import { normaliseRules, normaliseDetect, isGradient } from './theme-rules.js';
+import { validateDeclaration } from './css-values.js';
 import { ROLES } from './types.js';
 
 /** Bumped only when an older file needs migrating. */
@@ -146,7 +147,29 @@ const EFFECT_DEFAULTS = Object.freeze({
   weight: null,        // heading font-weight
   backdrop: null,      // {base, blobs[], css[]} gradient painted behind the page (glass themes)
   transition: null,    // a `transition` value for surfaces and chrome, e.g. "all 0.2s ease"
+  shadowCss: null,     // the theme's shadow as the file wrote it, or "none"; replaces the kind's
+  saturate: null,      // %, saturation in the backdrop filter beside the blur
+  brighten: null,      // %, brightness in the backdrop filter beside the blur
+  sheen: null,         // a gradient drawn over every surface, as the file wrote it
 });
+
+/**
+ * A shadow a file wrote out, kept whole. `none` is kept too — it is the file saying there
+ * is no shadow, which the engine's default would otherwise contradict.
+ */
+function shadowValue(value) {
+  if (typeof value !== 'string') return null;
+  const raw = value.trim().replace(/\s+/g, ' ');
+  if (/^none$/i.test(raw)) return 'none';
+  if (!/\d/.test(raw)) return null;
+  const checked = validateDeclaration('box-shadow', raw);
+  return checked.ok ? checked.value : null;
+}
+
+/** A gradient a file drew over its surfaces, checked the way every gradient is. */
+function sheenValue(value) {
+  return typeof value === 'string' && isGradient(value.trim()) ? value.trim() : null;
+}
 
 /**
  * What a transition may be made of: times, easings, property names, a cubic-bezier.
@@ -268,7 +291,9 @@ export function backdropCss(value) {
   const written = (Array.isArray(value.css) ? value.css : []).filter(isGradient);
   const layers = blobs.map((b) => `radial-gradient(${b.size}% ${b.size}% at ${b.x}% ${b.y}%, `
     + `${b.color} 0%, ${fadeOut(b.color)} 60%)`);
-  return [...written, ...layers, value.base].join(', ');
+  // The blobs go over the written gradient: they fade to nothing at their edges, so they
+  // show through, whereas a written gradient is usually opaque and would hide them.
+  return [...layers, ...written, value.base].join(', ');
 }
 
 function slug(value) {
@@ -473,6 +498,18 @@ export function normaliseTheme(raw, { trusted = false, inferred = null } = {}) {
   effects.weight = num(rawEffects.weight ?? said.weight, 100, 900);
   effects.backdrop = painted;
   effects.transition = transition(rawEffects.transition) ?? transition(said.transition);
+  effects.shadowCss = shadowValue(rawEffects.shadowCss) ?? shadowValue(said.shadowCss);
+  effects.saturate = num(rawEffects.saturate ?? said.saturate, 0, 300);
+  effects.brighten = num(rawEffects.brighten ?? said.brighten, 0, 300);
+  effects.sheen = sheenValue(rawEffects.sheen) ?? sheenValue(said.sheen);
+
+  // A border the file wants partly see-through: its opacity is applied to the palette's
+  // edge colour, where the engine reads it from.
+  const borderOpacity = num(rawEffects.borderOpacity ?? said.borderOpacity, 0, 1);
+  if (borderOpacity != null && borderOpacity < 1) {
+    const edge = parseColor(palette.border);
+    if (edge && edge.a === 1) palette.border = `rgba(${edge.r}, ${edge.g}, ${edge.b}, ${borderOpacity})`;
+  }
 
   const made = materials({ ...dialect.materials, ...source.materials });
 
@@ -569,13 +606,21 @@ export function parseThemeInput(input, decoded = null, { name = 'Imported theme'
     // Collected for a single theme only. A collection of twenty would produce a heap of
     // notes belonging to no one theme in particular, which tells the reader nothing.
     const notes = list.length === 1 ? [] : null;
-    const themes = list.map((entry) => normaliseTheme(entry, { inferred: notes })).filter(Boolean);
+    // A file this reader cannot make a theme of is handed on whole, variants and all: the
+    // other readers work its palette out and the variants are taken from what they make.
+    const themes = list.flatMap((entry) => {
+      const main = normaliseTheme(entry, { inferred: notes });
+      return main ? [main, ...modeVariants(entry).map((variant) => normaliseTheme(variant))] : [];
+    }).filter(Boolean);
     if (themes.length) return { themes, error: null, source: 'webin', inferred: notes ?? [] };
   }
 
   const foreign = adaptForeignThemes(text, { name, themeColor });
   if (foreign) {
-    const themes = foreign.themes.map((candidate) => normaliseTheme(candidate)).filter(Boolean);
+    const themes = foreign.themes.flatMap((candidate) => [
+      normaliseTheme(candidate),
+      ...modeVariants(candidate).map((variant) => normaliseTheme(variant)),
+    ]).filter(Boolean);
     if (themes.length) {
       return { themes, error: null, source: foreign.source, inferred: foreign.inferred };
     }
@@ -590,6 +635,99 @@ export function parseThemeInput(input, decoded = null, { name = 'Imported theme'
     error: 'Webin could not read that. Paste a share code, a .webin.json file, a CSS :root block, '
       + 'a VS Code theme, a base16 scheme — or the address of a website to take its design from.',
   };
+}
+
+/** Where a file keeps the other modes it carries, and what it calls one at the top level. */
+const MODE_BLOCKS = ['special', 'modes', 'variants', 'schemes', 'alternates'];
+const MODE_KEY = /^([a-z]+?)(mode|scheme|theme|variant)$/i;
+
+/** Most variants one file may add beside its main theme. */
+const VARIANT_LIMIT = 3;
+
+/**
+ * The other modes a file carries, each as a theme of its own.
+ *
+ * A theme file routinely describes its night beside its day — `special.nightMode`,
+ * `modes.dark`, a `sunsetMode` — and that is not a note about this theme but a second
+ * theme in the same file, which the importer already knows how to offer. Each variant is
+ * the file with the mode's colours laid over its palette, or over the layers of its page
+ * gradient where the mode names those instead (a sunset recolours the sky), and everything
+ * else — its fonts, its cards, its buttons — exactly as the file said.
+ *
+ * @param {object} entry the theme as it arrived, envelope or not
+ * @returns {object[]} raw variants, still to be normalised like anything else
+ */
+export function modeVariants(entry) {
+  const source = entry?.theme && typeof entry.theme === 'object' ? entry.theme : entry;
+  if (!source || typeof source !== 'object') return [];
+  const out = [];
+
+  const roleWords = new Map();
+  for (const key of PALETTE_KEYS) {
+    roleWords.set(key.toLowerCase(), key);
+    for (const alias of PALETTE_ALIASES[key] ?? []) roleWords.set(alias.toLowerCase(), key);
+  }
+  const flat = (k) => String(k).toLowerCase().replace(/[\s_-]+/g, '');
+
+  // The layers of the page gradient, by the kind of thing each says it is.
+  const ground = [source.background, source.backgroundStyle, source.backdrop, source.canvas]
+    .find((b) => b && typeof b === 'object');
+  const layerKey = ground ? ['layers', 'atmosphere', 'blobs', 'orbs', 'glows', 'lights'].find((k) => Array.isArray(ground[k])) : null;
+  const layers = layerKey ? ground[layerKey] : [];
+  const layerOf = (word) => layers.find((l) => l && typeof l === 'object' && typeof l.type === 'string'
+    && (flat(l.type) === word || flat(l.type).startsWith(word) || word.startsWith(flat(l.type))));
+
+  const candidates = [];
+  for (const block of MODE_BLOCKS) {
+    const holder = source[block];
+    if (!holder || typeof holder !== 'object' || Array.isArray(holder)) continue;
+    for (const [key, value] of Object.entries(holder)) candidates.push([key, value]);
+  }
+  for (const [key, value] of Object.entries(source)) if (MODE_KEY.test(key)) candidates.push([key, value]);
+
+  for (const [key, value] of candidates) {
+    if (out.length >= VARIANT_LIMIT) break;
+    if (!value || typeof value !== 'object' || Array.isArray(value) || value.enabled === false) continue;
+
+    const roles = {};
+    const recoloured = new Map();
+    for (const [name, raw] of Object.entries(value)) {
+      if (typeof raw !== 'string' || !parseColor(raw)) continue;
+      const word = flat(name);
+      const role = roleWords.get(word);
+      if (role) { roles[role] = raw; continue; }
+      const layer = layerOf(word);
+      if (layer) recoloured.set(layer, raw);
+    }
+    if (!Object.keys(roles).length && !recoloured.size) continue;
+
+    const mode = key.replace(MODE_KEY, '$1').replace(/[\s_-]+/g, ' ').trim() || key;
+    const label = mode.charAt(0).toUpperCase() + mode.slice(1);
+    const canvas = roles.background ? parseColor(roles.background) : null;
+    const dark = /night|dark|midnight|dusk/i.test(mode) ? true
+      : (/day|light|dawn|noon/i.test(mode) ? false
+        : (canvas ? luminance(canvas) < 0.3 : source.dark === true));
+
+    const variant = {
+      ...source,
+      id: slug(source.id) ? `${slug(source.id)}-${slug(mode)}` : undefined,
+      name: `${text(source.name, NAME_LIMIT - label.length - 3) || 'Untitled theme'} — ${label}`,
+      dark,
+      palette: { ...(source.palette && typeof source.palette === 'object' ? source.palette : {}), ...roles },
+    };
+    // The mode's own background is the ground its gradient is painted over, too.
+    if (recoloured.size || roles.background) {
+      variant[layerKey ? ['background', 'backgroundStyle', 'backdrop', 'canvas'].find((k) => source[k] === ground) : null] = ground && layerKey
+        ? { ...ground, ...(roles.background ? { base: roles.background } : {}),
+          [layerKey]: layers.map((l) => (recoloured.has(l) ? { ...l, color: recoloured.get(l) } : l)) }
+        : ground;
+    }
+    delete variant[undefined];
+    for (const block of MODE_BLOCKS) delete variant[block];
+    for (const [k] of candidates) if (MODE_KEY.test(k)) delete variant[k];
+    out.push(variant);
+  }
+  return out;
 }
 
 function tryJson(value) {

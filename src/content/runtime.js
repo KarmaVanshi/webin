@@ -14,7 +14,7 @@ import {
   themeToFile, collectionToFile, themeFileName, normaliseTheme,
 } from '../shared/theme-format.js';
 import { createBackend } from '../storage/bridge.js';
-import { Store, hostOf } from '../storage/store.js';
+import { Store, StorageError, hostOf } from '../storage/store.js';
 import { PRESETS, presetById } from '../themes/library.js';
 import { themeFromTokens } from '../themes/capture.js';
 import { detectTokens } from './tokens.js';
@@ -769,11 +769,29 @@ export class Webin {
       : 'Readable text is off.');
   }
 
+  /**
+   * Runs a write to the store, and says so when it did not land.
+   *
+   * The browser can refuse a write — its storage is full, or the extension was reloaded
+   * under this page — and a theme the user has just been told is theirs must not quietly
+   * be gone on the next visit. Resolves to `undefined` in that case, after telling them;
+   * every caller treats that as "stop here".
+   */
+  async #persist(work) {
+    try {
+      return await work();
+    } catch (error) {
+      if (!(error instanceof StorageError)) throw error;
+      this.#panel.toast('error', 'Could not save — the browser refused to store it. Delete a theme you no longer use and try again.');
+      return undefined;
+    }
+  }
+
   /** Captures the current page's design as a theme of the user's own. */
   async #capture() {
     const tokens = this.#tokens ?? this.#monitor.suspend(() => this.#pristineTokens());
     const theme = themeFromTokens(tokens, titleCase(this.#host));
-    await this.#store.saveTheme(theme);
+    if (!(await this.#persist(() => this.#store.saveTheme(theme)))) return;
     await this.#refresh({ menuOpen: false });
     this.#panel.toast('info', `Saved “${theme.name}”. It is yours to use anywhere.`);
   }
@@ -824,7 +842,8 @@ export class Webin {
 
   /** Saves themes that have been read and, where necessary, looked at. */
   async #keep(themes) {
-    const added = await this.#store.importThemes(themes);
+    const added = await this.#persist(() => this.#store.importThemes(themes));
+    if (!added) return;
     await this.#refresh({ view: 'gallery', preview: null });
     // One theme means they want to see it; a collection means they were restoring.
     if (added.length === 1) await this.#applyThemeById(added[0].id);
@@ -908,7 +927,7 @@ export class Webin {
       this.#panel.setState({ rename: { ...pending, name, error: 'That name cannot be used.' } });
       return;
     }
-    await this.#store.saveTheme(renamed);
+    if (!(await this.#persist(() => this.#store.saveTheme(renamed)))) return;
     // The footer names the applied theme, so it has to hear about this too.
     if (this.#active?.id === renamed.id) this.#active = { ...this.#active, name: renamed.name };
     await this.#refresh({ view: 'gallery', rename: null });
@@ -918,7 +937,7 @@ export class Webin {
   async #delete(id) {
     const themes = await this.#store.themes();
     const theme = themes.find((t) => t.id === id);
-    await this.#store.deleteTheme(id);
+    if (!(await this.#persist(() => this.#store.deleteTheme(id)))) return;
     if (this.#active?.id === id) await this.#clearTheme();
     await this.#refresh();
     this.#panel.toast('info', `Deleted “${theme?.name ?? 'theme'}”.`);
@@ -955,17 +974,25 @@ export class Webin {
     this.#panel.toast('info', `Backed up ${themes.length} theme${themes.length === 1 ? '' : 's'}.`);
   }
 
+  /**
+   * Hands the user a file.
+   *
+   * The link lives inside the panel's closed shadow root for the moment it exists, not in
+   * the page's body: a blob URL is readable by anything on the page's origin, and an
+   * anchor appended to the body is one `MutationObserver` away from the page fetching the
+   * user's themes before the URL is revoked. Inside the closed root there is nothing for
+   * the page to observe, so the URL is never anywhere the page can read it.
+   */
   #download(name, payload) {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = this.#doc.createElement('a');
-    link.setAttribute(OWNED_ATTR, '');
     link.href = url;
     link.download = name;
-    this.#doc.body.appendChild(link);
+    (this.#panel.shadow ?? this.#doc.documentElement).appendChild(link);
     link.click();
     link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   // ── Boot CSS ───────────────────────────────────────────────────────────

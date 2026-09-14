@@ -151,9 +151,10 @@ Webin restyles the page the user is currently looking at. The user chooses which
 restyle, and the extension cannot know in advance which those will be, so it needs to be
 able to run on any site the user opens.
 
-On each page it reads the rendered styles — colours, spacing, corner radii — in order to
-work out what to remap, and it injects a stylesheet of its own. It does not read page
-text, form fields, credentials or browsing history, and it transmits nothing.
+On each page it reads the rendered styles — colours, spacing, corner radii — and, when
+the user picks an element to edit, that element's own styles and text, in order to work
+out what to remap and to show what it is changing. It injects a stylesheet of its own.
+It does not read form fields, credentials or browsing history, and it transmits nothing.
 ```
 
 **`storage`**
@@ -163,15 +164,31 @@ Stores the designs the user has saved or imported, and which design is applied t
 site, using chrome.storage.local on the user's own machine. Nothing is synced or uploaded.
 ```
 
+**`unlimitedStorage`**
+
+```
+A saved design may include a background picture the user chose from their own computer,
+stored inline as part of the design. A few of those exceed the default local storage
+quota, and a save that silently fails is worse than a permission that asks for nothing at
+install. Everything stays on the user's machine.
+```
+
 **Remote code**: No. Every file the extension runs ships in the package: no CDN, no eval,
 no remotely hosted script, and nothing fetched is ever executed.
 
 If asked about network use, the distinction to draw is between code and data. Webin can
 fetch a design file — a stylesheet or a JSON theme — but only from an address the user
-types and confirms, and what comes back is parsed as data and rebuilt field by field
-before it is used. Colours must parse as colours, numbers are clamped, font names are
-checked against a conservative character set, and raw CSS from an untrusted file is
-discarded rather than injected. Nothing from the network becomes code.
+types and confirms, and what comes back is parsed as data and rebuilt before it is used.
+Colours must parse as colours, numbers are clamped, and every CSS declaration a design
+carries is checked against an allowlist of visual properties: a value may not contain a
+URL or any other function that fetches, a comment, or anything that would end one
+declaration and start another. Nothing from the network becomes code, and nothing a
+design says can make the browser request anything.
+
+**Isolation from the page**: the extension's panel and editor overlay live in closed
+shadow roots. A page can tell that Webin is installed and nothing more — it cannot press
+the extension's buttons, read the user's list of designs, or ask the extension to fetch
+an address. The service worker answers only the extension's own scripts.
 
 **Data usage disclosures**: none of the categories apply. Webin collects no personally
 identifiable information, health information, financial information, authentication
@@ -196,8 +213,12 @@ The editor has shipped. What has not, and what to keep in mind when it does:
   product and belongs in its own listing.
 - **Re-check the data disclosures** if anything more ever leaves the machine. A hosted
   gallery of shared designs, or syncing across a user's devices, would change the privacy
-  answers and would need a privacy policy URL. Fetching a file the user asked for does not,
-  and sharing by copy-and-paste does not.
+  answers. Fetching a file the user asked for does not, and sharing by copy-and-paste does
+  not.
+- **Privacy policy URL**: `PRIVACY.md` at the repository root is the policy. Put its public
+  URL (the GitHub page for the file is enough) in the dashboard's privacy-policy field —
+  the form does not strictly require one when no data is collected, but a `<all_urls>`
+  extension without one reliably sits in review.
 - **Use a staged rollout** for any update that touches the engine, so a mistake reaches a
   fraction of users rather than all of them.
 
@@ -205,6 +226,7 @@ The editor has shipped. What has not, and what to keep in mind when it does:
 
 - `version` in `manifest.json` must increase on every upload, and can never be reused.
 - Screenshots: the panel over a real site tells the story better than the panel alone.
-  `npm run verify` leaves usable ones in `shots/`.
+  `npm run verify` leaves usable ones in `shots/`, already at the 1280×800 the store
+  insists on — it accepts that size or 640×400 and nothing else.
 - Review on a `<all_urls>` extension takes days rather than hours, for updates as well as
   for the first submission. Plan releases around that, not around the merge.

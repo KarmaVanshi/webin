@@ -44,6 +44,10 @@ async function toggle(tab) {
  * A content script cannot address its own tab; the worker can.
  */
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
+  // Only this extension's own scripts may ask. Nothing else can reach this listener
+  // without `externally_connectable`, which is not declared — but a fetch made with every
+  // host permission there is deserves the check written down, not implied.
+  if (sender.id !== chrome.runtime.id) return false;
   if (message?.type === Msg.FETCH_THEME) {
     fetchTheme(message.url).then(respond, (error) => respond({ ok: false, reason: String(error?.message ?? error) }));
     return true;  // an async responder must say so, or the channel closes first.

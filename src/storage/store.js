@@ -60,6 +60,11 @@ function migrate(record) {
 /** A runaway import loop must not be able to fill local storage. */
 const MAX_THEMES = 80;
 
+/** A write the storage backend refused. The user was about to be told it worked. */
+export class StorageError extends Error {
+  name = 'StorageError';
+}
+
 export const DEFAULT_SETTINGS = Object.freeze({
   appearance: 'light',   // the panel's own light/dark chrome
   side: 'right',         // which edge the panel docks to
@@ -117,7 +122,11 @@ export class Store {
 
   async #writeThemes(themes) {
     const capped = themes.slice(0, MAX_THEMES);
-    await writeKey(this.#backend, KEY.themes, stamp({ themes: capped }));
+    const written = await writeKey(this.#backend, KEY.themes, stamp({ themes: capped }));
+    // A write the browser refused — its storage is full, or the extension has just been
+    // reloaded under this page — is not a write. Saying so is the caller's job; the store's
+    // is to make sure it cannot be missed.
+    if (!written) throw new StorageError('The browser refused to save the themes.');
     return capped;
   }
 

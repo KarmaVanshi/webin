@@ -15,8 +15,8 @@
 import { parseColor, toCss, luminance } from './color.js';
 import { adaptForeignThemes, completePalette } from './foreign-themes.js';
 import { readDialect } from './theme-dialects.js';
-import { normaliseRules, normaliseDetect, isGradient } from './theme-rules.js';
-import { validateDeclaration } from './css-values.js';
+import { normaliseRules, normaliseDetect, isGradient, isKeyframeName } from './theme-rules.js';
+import { validateDeclaration, toKebab } from './css-values.js';
 import { ROLES } from './types.js';
 
 /** Bumped only when an older file needs migrating. */
@@ -49,6 +49,9 @@ const SHARE_PREFIX_Z = 'webin:1z:';
  *             media:string|null, properties:Object<string,string>}>} rules
  *   Declarations against a target or a selector of the theme's own. See theme-rules.js.
  * @property {Object<string, string>} detect   Target -> selector list that also finds it.
+ * @property {{keyframes: Object<string, Object<string, Object<string, string>>>}} motion
+ *   The theme's `@keyframes`, by name: each a map of stop (`0%`, `50%, 100%`) to
+ *   declarations. A rule's `animation` names one; the engine writes the block.
  * @property {string|null} author
  * @property {boolean} custom         True for anything not shipped with the extension.
  */
@@ -392,6 +395,86 @@ function states(raw) {
 }
 
 /**
+ * How many keyframes one theme may carry, and how many stops and declarations each may
+ * hold. A motion system of the kind people write keeps fifteen or twenty; the ceilings
+ * are set well past that, because the ones that were cut off would simply not play.
+ */
+const KEYFRAME_LIMIT = 48;
+const STOP_LIMIT = 16;
+const STOP_PROPERTY_LIMIT = 12;
+
+/** A keyframe selector: `from`, `to`, a percentage up to 100, or a comma list of them. */
+const STOP = /^(from|to|(100|\d{1,2})(\.\d+)?%)(,(from|to|(100|\d{1,2})(\.\d+)?%))*$/i;
+
+/**
+ * The stops of one keyframes block, validated.
+ *
+ * Every declaration in a stop goes through the same gate as a rule's: the allowlist and
+ * the value checks hold inside a `@keyframes` exactly as they do outside one. A stop is
+ * written as the file wrote it — `"0%, 100%"` — or, in the shape the Web Animations API
+ * uses, as a list of objects each carrying an `offset`; both come out as the same map.
+ */
+function keyframeStops(raw) {
+  let entries;
+  if (Array.isArray(raw)) {
+    // Offsets are a fraction of the way through, or a percentage; frames with no offset
+    // are spread evenly, as the API spreads them.
+    entries = raw.filter((frame) => frame && typeof frame === 'object').map((frame, i, all) => {
+      const { offset, ...declarations } = frame;
+      const at = typeof offset === 'number' ? `${Math.round(offset * 1000) / 10}%`
+        : (typeof offset === 'string' ? offset : `${all.length > 1 ? Math.round((i / (all.length - 1)) * 1000) / 10 : 0}%`);
+      return [at, declarations];
+    });
+  } else if (raw && typeof raw === 'object') {
+    entries = Object.entries(raw);
+  } else {
+    return null;
+  }
+
+  const out = {};
+  for (const [selector, block] of entries.slice(0, STOP_LIMIT)) {
+    const key = String(selector).toLowerCase().replace(/\s+/g, '');
+    if (!STOP.test(key) || !block || typeof block !== 'object') continue;
+    const stop = key.split(',').map((s) => ({ from: '0%', to: '100%' }[s] ?? s)).join(', ');
+    const properties = out[stop] ?? {};
+    for (const [property, value] of Object.entries(block).slice(0, STOP_PROPERTY_LIMIT)) {
+      const checked = validateDeclaration(toKebab(property), value);
+      if (checked.ok) properties[checked.property] = checked.value;
+    }
+    if (Object.keys(properties).length) out[stop] = properties;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * The theme's keyframes, by name, each validated.
+ *
+ * A name has to be a CSS identifier and not a word the `animation` shorthand already
+ * means something by — see `isKeyframeName`. A block whose stops all fail is not kept
+ * under its name, so a rule that names it simply names nothing.
+ */
+function keyframes(raw) {
+  if (!raw || typeof raw !== 'object') return {};
+  const out = {};
+  for (const [name, stops] of Object.entries(raw).slice(0, KEYFRAME_LIMIT)) {
+    if (!isKeyframeName(name)) continue;
+    const parsed = keyframeStops(stops);
+    if (parsed) out[name] = parsed;
+  }
+  return out;
+}
+
+/**
+ * The ground a theme that names no colour at all is painted on.
+ *
+ * A motion file — keyframes, easings, durations, and not one colour — has still described
+ * a theme, and the honest reading is that it leaves the page's colours alone. There is no
+ * "leave them" for a palette here, since a theme repaints; the nearest thing is a plain
+ * light ground with dark ink, said so in the notes, and the file's own motion over it.
+ */
+const PLAIN_GROUND = Object.freeze({ background: '#fafafa', text: '#1f2328' });
+
+/**
  * Rebuilds a theme from untrusted input, or returns null when it is not salvageable.
  *
  * "Salvageable" means the palette parses. Everything else has a sane default, because a
@@ -472,9 +555,22 @@ export function normaliseTheme(raw, { trusted = false, inferred = null } = {}) {
     }
   }
 
+  // Everything the file said about motion, validated first: it is part of what decides
+  // whether a file with no colours is a theme at all.
+  const motion = { keyframes: keyframes({ ...dialect.motion?.keyframes, ...(source.motion?.keyframes ?? {}) }) };
+
+  // See `PLAIN_GROUND`. Only for a file that names nothing — a file that names a text
+  // colour and no canvas is a different case, and is completed from what it did name.
+  const notes = inferred ?? [];
+  if (!Object.keys(named).length && !spare.length && Object.keys(motion.keyframes).length) {
+    Object.assign(named, PLAIN_GROUND);
+    notes.push('background ← a plain light ground: the file describes motion and no colours');
+    notes.push('text ← dark ink on it');
+  }
+
   // The file's own `dark` is a better answer than anything read off the colours, when it
   // is there: a theme that says it is dark and names no canvas wants a dark one.
-  const completed = completePalette(named, inferred ?? [], {
+  const completed = completePalette(named, notes, {
     prefersDark: source.dark === true ? true : null,
     spare,
   });
@@ -537,6 +633,7 @@ export function normaliseTheme(raw, { trusted = false, inferred = null } = {}) {
     states: states({ ...dialect.states, ...source.states }),
     rules,
     detect,
+    motion,
     author: text(source.author, 40) || null,
     custom: trusted ? source.custom === true : true,
   };
@@ -564,6 +661,7 @@ export function themeToFile(theme) {
       states: theme.states,
       rules: theme.rules ?? [],
       detect: theme.detect ?? {},
+      motion: theme.motion ?? { keyframes: {} },
       author: theme.author,
     },
   };
@@ -786,16 +884,27 @@ async function deflate(bytes) {
   }
 }
 
+/**
+ * The most a share code may inflate to.
+ *
+ * Deflate can unpack a kilobyte into a megabyte, so a code pasted from a stranger is a
+ * request to allocate whatever they chose, and a few hundred kilobytes of code is enough
+ * to take the tab down. Sixty-four megabytes is two orders of magnitude past the largest
+ * theme the format can hold — one carrying the biggest picture the gate allows is under
+ * two — so nothing real is refused; only the bomb is.
+ */
+export const MAX_INFLATED = 64 * 1024 * 1024;
+
 async function inflate(bytes) {
   if (typeof DecompressionStream !== 'function') return null;
   try {
-    return await pump(new DecompressionStream('deflate-raw'), bytes);
+    return await pump(new DecompressionStream('deflate-raw'), bytes, MAX_INFLATED);
   } catch {
     return null;
   }
 }
 
-async function pump(transform, bytes) {
+async function pump(transform, bytes, limit = Infinity) {
   const writer = transform.writable.getWriter();
   // A damaged payload rejects on the write side as well as the read side. The reader's
   // rejection is the one we act on, so the writer's is silenced rather than left to
@@ -804,10 +913,16 @@ async function pump(transform, bytes) {
   writer.write(bytes).catch(ignore);
   writer.close().catch(ignore);
   const chunks = [];
+  let size = 0;
   const reader = transform.readable.getReader();
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
+    size += value.length;
+    if (size > limit) {
+      reader.cancel().catch(ignore);
+      throw new RangeError('share code inflates past the ceiling');
+    }
     chunks.push(value);
   }
   const total = chunks.reduce((n, c) => n + c.length, 0);

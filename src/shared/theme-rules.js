@@ -39,7 +39,7 @@ export const RULE_TARGETS = Object.freeze([...ROLES, 'surface', 'body', 'heading
  * is open — as distinct from `active`, which is the moment a button is held down.
  */
 export const RULE_STATES = Object.freeze(['hover', 'active', 'focus', 'placeholder', 'current',
-  'secondary', 'secondaryHover']);
+  'primary', 'secondary', 'secondaryHover']);
 
 /**
  * The states that are only a way of telling one kind of a target from another.
@@ -47,9 +47,10 @@ export const RULE_STATES = Object.freeze(['hover', 'active', 'focus', 'placehold
  * A theme's `buttons.secondary` is not a moment in a button's life but a different button
  * — the one that was not the page's call to action. The engine marks a button whose own
  * fill was the page's accent as primary, and `secondary` is every other one; the state is
- * meaningless on any other target, and is dropped there.
+ * meaningless on any other target, and is dropped there. `primary` is the call to action
+ * itself, for the one thing a theme says about it and nothing else: how it idles.
  */
-const BUTTON_ONLY_STATES = new Set(['secondary', 'secondaryHover']);
+const BUTTON_ONLY_STATES = new Set(['primary', 'secondary', 'secondaryHover']);
 
 /**
  * The parts of a target a rule may be written for.
@@ -896,6 +897,258 @@ export function normaliseDetect(raw) {
   return out;
 }
 
+// ─── Motion ──────────────────────────────────────────────────────────────────
+
+/**
+ * The words an `animation` shorthand is made of that are not the name of its keyframes.
+ *
+ * A keyframes block may not take one of these as its name, because the shorthand could
+ * then not say which it meant: `animation: ease 1s` is one second of the built-in easing,
+ * not one second of a block called `ease`.
+ */
+const ANIMATION_KEYWORDS = new Set(['none', 'infinite', 'alternate', 'alternate-reverse', 'normal',
+  'reverse', 'forwards', 'backwards', 'both', 'running', 'paused', 'ease', 'ease-in', 'ease-out',
+  'ease-in-out', 'linear', 'step-start', 'step-end', 'initial', 'inherit', 'unset', 'revert', 'all']);
+
+/** A keyframes name is a CSS identifier: letters, digits, hyphens, underscores. */
+const KEYFRAME_NAME = /^[A-Za-z_][\w-]{0,47}$/;
+
+/** True when a string may name a `@keyframes` block of the theme's own. */
+export function isKeyframeName(name) {
+  return typeof name === 'string' && KEYFRAME_NAME.test(name) && !ANIMATION_KEYWORDS.has(name.toLowerCase());
+}
+
+/** A time, as a shorthand writes one: `450ms`, `4s`, `.3s`. */
+const TIME = /^\d*\.?\d+m?s$/i;
+
+/** An easing, as a shorthand writes one: a keyword, a curve, a step function. */
+const EASING = /^(ease(-in|-out|-in-out)?|linear|step-(start|end)|steps\(.*\)|cubic-bezier\(.*\))$/i;
+
+const object = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
+const flatWord = (k) => String(k ?? '').toLowerCase().replace(/[\s_-]+/g, '');
+
+/**
+ * A scale the file keeps — its durations, or its easings — as `name -> value`, holding
+ * only the entries that are what the scale says they are.
+ *
+ * A duration written as a bare number is milliseconds: `breeze: 280` and `breeze: "280ms"`
+ * are the same statement.
+ */
+function scaleOf(block, test, { numbersAreMs = false } = {}) {
+  const out = {};
+  if (!object(block)) return out;
+  for (const [name, value] of Object.entries(block)) {
+    const raw = typeof value === 'number' && numbersAreMs && Number.isFinite(value) ? `${value}ms`
+      : (typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : null);
+    if (raw && test.test(raw)) out[name] = raw;
+  }
+  return out;
+}
+
+/** A duration in milliseconds, from either spelling. */
+function millis(value) {
+  const match = String(value).match(/^(\d*\.?\d+)(m?s)$/i);
+  if (!match) return null;
+  return Number.parseFloat(match[1]) * (match[2].toLowerCase() === 's' ? 1000 : 1);
+}
+
+/** The names a scale gives the step it means by default. */
+const DEFAULT_STEP = /^(default|base|normal|standard|medium|md|regular)$/;
+
+/**
+ * The duration a scale means for one purpose.
+ *
+ * A scale names a default step, or it does not — and one that does not is read for the
+ * step nearest the length the purpose is built around: a quarter of a second for a hover,
+ * which is what UI motion is timed to, and about half a second for something arriving.
+ */
+function durationFrom(scale, target) {
+  const entries = Object.entries(scale);
+  if (!entries.length) return null;
+  const named = entries.find(([name]) => DEFAULT_STEP.test(flatWord(name)));
+  if (named) return named[1];
+  return entries
+    .map(([, value]) => [value, Math.abs((millis(value) ?? Infinity) - target)])
+    .sort((a, b) => a[1] - b[1])[0][0];
+}
+
+/**
+ * The easing a scale means by default: the one it calls that, else whichever eases in
+ * and out — a hover has to arrive as gently as it leaves — else whichever eases out,
+ * else the first the file wrote.
+ */
+function easingFrom(scale) {
+  const entries = Object.entries(scale);
+  if (!entries.length) return null;
+  const by = (test) => entries.find(([name]) => test.test(flatWord(name)));
+  return (by(DEFAULT_STEP) ?? by(/inout$|^smooth$/) ?? by(/out$/) ?? entries[0])[1];
+}
+
+/**
+ * A shorthand with the file's own names for its times and curves read as the values they
+ * stand for: `softRise {duration.drift} {easing.wind}`, or simply `softRise drift wind`.
+ * A word that names nothing is left as written and judged by the gate like anything else.
+ *
+ * The first word that names one of the keyframes is the animation's name and is never
+ * read as a token, whatever else it is called: a motion system that has a `float`
+ * keyframe, a `float` duration and a `breath` easing beside a `breath` keyframe is
+ * ordinary, and `float 4s … infinite` means the keyframe.
+ */
+function resolveMotionTokens(value, durations, easings, names = []) {
+  const written = String(value).replace(/\{\s*(?:durations?|easings?|timing)\.([\w-]+)\s*\}/g,
+    (whole, key) => durations[key] ?? easings[key] ?? whole);
+  let named = false;
+  return splitTop(written.replace(/\s+/g, ' '), ' ')
+    .map((word) => {
+      if (!named && names.includes(word.replace(/,$/, ''))) { named = true; return word; }
+      return durations[word] ?? easings[word] ?? word;
+    })
+    .join(' ');
+}
+
+/** True when a shorthand names one of the keyframes given. */
+function namesKeyframe(value, names) {
+  return splitTop(String(value).replace(/\s+/g, ' '), ' ')
+    .some((word) => names.includes(word.replace(/,$/, '')));
+}
+
+/**
+ * An animation a file wrote as fields rather than as a shorthand — `{ keyframes: "float",
+ * duration: "4s", easing: "breath", iterations: "infinite" }` — as the shorthand.
+ */
+function shorthandOf(block, durations, easings, names) {
+  const name = block.keyframes ?? block.keyframe ?? block.name ?? block.animation;
+  if (typeof name !== 'string') return null;
+  // A bare number is milliseconds where a time is wanted, and a count where a count is.
+  const time = (v) => (typeof v === 'number' ? `${v}ms` : v);
+  const count = block.iterations ?? block.iterationCount ?? block.repeat ?? block.count
+    ?? (block.infinite === true || block.loop === true ? 'infinite' : null);
+  const parts = [name.trim(),
+    time(block.duration ?? block.time ?? block.speed),
+    block.easing ?? block.timing ?? block.timingFunction ?? block.curve,
+    time(block.delay),
+    count,
+    block.direction,
+    block.fill ?? block.fillMode];
+  const written = parts.filter((v) => v != null && v !== '' && v !== false).map((v) => String(v).trim());
+  return resolveMotionTokens(written.join(' '), durations, easings, names);
+}
+
+/** The words a file uses for the categories of motion it keeps presets for. */
+const PRESET_WORDS = {
+  entrance: ['entrance', 'entrances', 'enter', 'in', 'appear', 'appears', 'mount', 'intro', 'reveal', 'arrive'],
+  ambient: ['ambient', 'ambience', 'idle', 'loop', 'loops', 'continuous', 'breathing', 'resting', 'background'],
+};
+
+/** Among a category's entries, the one that pops rather than drifts — for what opens. */
+const OPENING = /magic|pop|zoom|scale|spring|bounce|grow|open/i;
+
+/** The states an `apply` key may be written with, after the colon: `card:hover`. */
+const APPLY_STATES = new Set(['hover', 'active', 'focus', 'current', 'primary', 'secondary']);
+
+/**
+ * Everything a file says about motion: its keyframes, and which of them go where.
+ *
+ * A motion file is a library and a set of instructions for using it. The library is the
+ * `keyframes` block, with an `animation` table naming a shorthand for each, and a scale of
+ * `duration`s and `easing`s the shorthands may be written in terms of. The instructions
+ * are an `apply` block — an element, an animation — or, more often, `presets`: the
+ * animations grouped by what they are for. An entrance is for what arrives, so it is the
+ * page's surfaces and headings coming in, and the popping kind of entrance is what a modal
+ * or a popover opens with. An ambient animation is for what idles, and the one thing on a
+ * page a design system leaves breathing is its call to action. An exit has nothing to
+ * leave — the theme never removes anything — and decoration has nowhere to sit, so both
+ * stay in the library, where the code tool can still reach them.
+ *
+ * The keyframes come back raw, to be validated by the format; the rules go through the
+ * same gate as every other rule.
+ *
+ * @returns {{keyframes: object, rules: Array<{target:string, state:string|null, properties:object}>}}
+ */
+export function readMotionRules(source) {
+  const none = { keyframes: {}, rules: [] };
+  if (!object(source)) return none;
+  const motion = object(source.motion) ?? {};
+  const keyframes = object(source.keyframes) ?? object(motion.keyframes) ?? object(source.animations?.keyframes) ?? null;
+  if (!keyframes) return none;
+  const names = Object.keys(keyframes).filter(isKeyframeName);
+  if (!names.length) return none;
+
+  const durations = scaleOf(source.duration ?? source.durations ?? motion.duration ?? motion.durations, TIME, { numbersAreMs: true });
+  const easings = scaleOf(source.easing ?? source.easings ?? motion.easing ?? motion.easings ?? source.timing, EASING);
+  const defaultDuration = durationFrom(durations, 500) ?? '600ms';
+  const defaultEasing = easingFrom(easings) ?? 'ease';
+
+  // The file's named animations: each a shorthand that names one of its keyframes. A
+  // block called `animation` that holds a `transition` and a `hoverTransform` is a block
+  // of settings, and names no keyframes, so nothing in it is read as one.
+  const shorthands = {};
+  for (const block of [source.animation, source.animations, motion.animation, motion.animations]) {
+    if (!object(block)) continue;
+    for (const [name, value] of Object.entries(block)) {
+      const written = typeof value === 'string' ? resolveMotionTokens(value, durations, easings, names)
+        : (object(value) ? shorthandOf(value, durations, easings, names) : null);
+      if (written && namesKeyframe(written, names)) shorthands[name] ??= written;
+    }
+  }
+
+  // An animation, by whatever the file calls it: a shorthand's name, a keyframes name
+  // (given the file's default length and curve), or a shorthand written out in place.
+  const animationOf = (ref, { loop = false } = {}) => {
+    if (typeof ref !== 'string' || !ref.trim()) return null;
+    const word = ref.trim();
+    if (shorthands[word]) return shorthands[word];
+    if (names.includes(word)) return `${word} ${defaultDuration} ${defaultEasing}${loop ? ' infinite' : ''}`;
+    const written = resolveMotionTokens(word, durations, easings, names);
+    return namesKeyframe(written, names) ? written : null;
+  };
+
+  const rules = [];
+  const push = (target, state, animation) => {
+    if (animation) rules.push({ target, state, properties: { animation } });
+  };
+
+  // ── Presets: the file's categories, mapped to the page ──
+  const presets = object(source.presets) ?? object(motion.presets) ?? {};
+  const category = (words) => {
+    const hit = Object.entries(presets).find(([key]) => words.includes(flatWord(key)));
+    return hit ? hit[1] : null;
+  };
+  const pickFrom = (block, prefer = null) => {
+    if (typeof block === 'string') return block;
+    if (!object(block)) return null;
+    const entries = Object.entries(block).filter(([, v]) => typeof v === 'string');
+    if (!entries.length) return null;
+    const preferred = prefer ? entries.find(([key]) => prefer.test(key)) : null;
+    return (preferred ?? entries[0])[1];
+  };
+  const entrance = category(PRESET_WORDS.entrance);
+  const arriving = animationOf(pickFrom(entrance));
+  for (const target of ['surface', 'heading']) push(target, null, arriving);
+  const opening = animationOf(pickFrom(entrance, OPENING));
+  for (const target of ['modal', 'popover']) push(target, null, opening);
+  push('button', 'primary', animationOf(pickFrom(category(PRESET_WORDS.ambient)), { loop: true }));
+
+  // ── Apply: the file's own say over where each animation goes, after the presets so it
+  // wins where the two disagree ──
+  const applied = [source.apply, motion.apply, source.assign, motion.assign, source.targets, motion.targets]
+    .find(object);
+  for (const [key, value] of Object.entries(applied ?? {})) {
+    const [word, suffix] = String(key).split(':');
+    const flat = flatWord(word);
+    const target = targetOf(word);
+    if (!target) continue;
+    const state = APPLY_STATES.has(flatWord(suffix)) ? flatWord(suffix)
+      : (PRIMARY_BUTTON_WORDS.has(flat) ? 'primary' : (SECONDARY_BUTTON_WORDS.has(flat) ? 'secondary' : null));
+    const ref = typeof value === 'string' ? value
+      : (object(value) ? (value.animation ?? value.name ?? value.keyframes ?? value.preset) : null);
+    const loop = object(value) ? value.infinite === true || value.loop === true : false;
+    push(target, state, animationOf(ref, { loop }));
+  }
+
+  return { keyframes, rules };
+}
+
 /** A theme's `transition`, from whichever block wrote it, as one `transition` value. */
 export function readTransition(source) {
   if (!source || typeof source !== 'object') return null;
@@ -908,9 +1161,20 @@ export function readTransition(source) {
   if (typeof value !== 'string' && inner && typeof inner === 'object') {
     const duration = inner.duration ?? inner.speed;
     const easing = inner.easing ?? inner.ease ?? inner.curve;
-    if (duration != null) {
+    if (duration != null && typeof duration !== 'object') {
       const time = typeof duration === 'number' ? `${duration}ms` : String(duration).trim();
       value = [time, easing].filter(Boolean).join(' ');
+    }
+  }
+  // A file that keeps a scale of durations and a scale of easings has said how fast it
+  // moves, even with no `transition` written: the step of each it means by default.
+  if (typeof value !== 'string') {
+    const durations = scaleOf(source.duration ?? source.durations ?? source.motion?.duration ?? source.motion?.durations,
+      TIME, { numbersAreMs: true });
+    const time = durationFrom(durations, 250);
+    if (time) {
+      const easings = scaleOf(source.easing ?? source.easings ?? source.motion?.easing ?? source.motion?.easings, EASING);
+      value = [time, easingFrom(easings)].filter(Boolean).join(' ');
     }
   }
   if (typeof value !== 'string') return null;

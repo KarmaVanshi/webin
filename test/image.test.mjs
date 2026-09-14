@@ -136,6 +136,41 @@ test('a background image must be inline, and must be an image', () => {
   }
 });
 
+test('every function that can fetch is refused, not only the one spelled url', () => {
+  // Chrome loads `image-set("https://…" 1x)` exactly as it loads `url(https://…)`, and a
+  // gate that only knew the word `url` let a shared theme be a beacon on every site it was
+  // worn on. Each of these is a fetch by another name.
+  for (const [property, hostile] of [
+    ['background-image', 'image-set("https://evil.example/b.png" 1x)'],
+    ['background-image', '-webkit-image-set("https://evil.example/b.png" 1x)'],
+    ['background-image', 'image-set(url("https://evil.example/b.png") 1x)'],
+    ['background-image', 'cross-fade(image-set("https://evil.example/b.png" 1x), red)'],
+    ['background-image', 'src("https://evil.example/b.png")'],
+    ['background-image', 'image("https://evil.example/b.png")'],
+    ['background-image', 'paint(worklet)'],
+    ['background-image', 'element(#x)'],
+    ['content', 'image-set("https://evil.example/b.png" 1x)'],
+    ['list-style', 'image-set("https://evil.example/b.png" 1x)'],
+    ['cursor', 'image-set("https://evil.example/c.png" 1x), auto'],
+    ['cursor', 'IMAGE-SET("https://evil.example/c.png" 1x), auto'],
+    ['background-image', 'linear-gradient(red, blue), image-set("https://evil.example/b.png" 1x)'],
+    // `\75` is `u` to the CSS tokeniser, so this is `url(` spelled without the letters.
+    ['background-image', '\\75 rl(https://evil.example/b.png)'],
+    ['background-image', 'u\\rl(https://evil.example/b.png)'],
+    ['background-image', '\\69mage-set("https://evil.example/b.png" 1x)'],
+  ]) {
+    assert.equal(validateDeclaration(property, hostile).ok, false, `${property}: ${hostile}`);
+  }
+});
+
+test('a backslash is still a character inside a string', () => {
+  assert.equal(validateDeclaration('content', '"\\201C"').ok, true, 'a curly quote');
+  assert.equal(validateDeclaration('content', "'\\2014 '").ok, true, 'an em dash');
+  assert.equal(validateDeclaration('font-family', '"Söhne", sans-serif').ok, true);
+  // But the string has to be a string: a quote left open is not a hiding place.
+  assert.equal(validateDeclaration('content', '"\\201C').ok, false, 'unterminated');
+});
+
 test('a gradient background is untouched by the image exception', () => {
   assert.equal(validateDeclaration('background-image', 'linear-gradient(#000, #fff)').ok, true);
   assert.equal(validateDeclaration('background-image', 'none').ok, true);

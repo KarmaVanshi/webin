@@ -34,9 +34,21 @@ test('the panel cannot be styled by the page it is sitting on', async () => {
   const { panel, dom } = await mountPanel();
   const host = dom.window.document.querySelector(`[${OWNED_ATTR}]`);
 
-  assert.ok(host.shadowRoot, 'it lives in a shadow root');
+  assert.ok(panel.shadow, 'it lives in a shadow root');
   assert.match(host.getAttribute('style'), /all: initial/);
   assert.ok(panel.shadow.querySelector('style').textContent.includes(':host'));
+});
+
+test('nor reached into by it', async () => {
+  // The page can see the host; it must not see what is inside. With an open root, one
+  // line of page script could find the delete button and click it, or read every theme
+  // name the user owns, and the panel would take it for the user.
+  const { panel, dom } = await mountPanel();
+  const host = dom.window.document.querySelector(`[${OWNED_ATTR}]`);
+
+  assert.equal(host.shadowRoot, null, 'closed to the page');
+  assert.equal(panel.shadow.mode, 'closed');
+  assert.ok(panel.shadow.querySelector('[data-action]'), 'and still working from inside');
 });
 
 test('themes are shelved, and your own get their own shelf', async () => {

@@ -96,8 +96,11 @@ async function permissions(chrome, origin) {
     const manifest = chrome.runtime.getManifest();
     return { permissions: manifest.permissions ?? [], hosts: manifest.host_permissions ?? [] };
   `);
+  // `storage` for the themes and edits; `unlimitedStorage` because a theme may carry a
+  // picture, and the default ten-megabyte quota is a handful of those. Neither shows a
+  // warning at install.
   check('only the permissions the code uses are requested',
-    granted.permissions.join() === 'storage', granted.permissions.join(', ') || 'none');
+    granted.permissions.join() === 'storage,unlimitedStorage', granted.permissions.join(', ') || 'none');
 
   // What the worker does on a toolbar click: find the tab, read its URL to rule out
   // browser pages, then message the top frame. Every step needs a permission.
@@ -392,20 +395,30 @@ async function editor(chrome, origin) {
   `);
   check('clicking the page selects an element', selected.has === true, selected.tag ?? 'nothing selected');
 
-  // The overlay must be drawn, and must not be part of the page's own layout.
-  const marks = await page.evaluate(`
-    const hosts = [...document.documentElement.children].filter((el) => el.hasAttribute('data-webin-owned'));
-    const overlay = hosts.map((h) => h.shadowRoot?.querySelector('.webin-marks, .webin-marks-host')).find(Boolean);
+  // The overlay must be drawn, and must not be part of the page's own layout. Drawn is
+  // judged from the extension's side, because from the page's side there is nothing to
+  // see — and that is the second thing checked.
+  const marks = await page.evaluateInExtension(`
+    const root = window.__webin.webin.editor.overlayRoot;
+    const overlay = root?.querySelector('.webin-marks, .webin-marks-host');
     return {
-      hosts: hosts.length,
       drawn: Boolean(overlay && overlay.innerHTML.length > 0),
       scrollWidth: document.documentElement.scrollWidth,
       clientWidth: document.documentElement.clientWidth,
     };
   `);
-  check('the overlay is drawn in its own shadow root', marks.drawn === true, `${marks.hosts} owned hosts`);
+  check('the overlay is drawn in its own shadow root', marks.drawn === true);
   check('and adds nothing to the page layout', marks.scrollWidth <= marks.clientWidth + 1,
     `${marks.scrollWidth} vs ${marks.clientWidth}`);
+
+  // From the page's own world, every host is a box with nothing inside: the roots are
+  // closed. An open one would let the page press Webin's buttons in the user's name.
+  const sealed = await page.evaluate(`
+    const hosts = [...document.documentElement.children].filter((el) => el.hasAttribute('data-webin-owned'));
+    return { hosts: hosts.length, open: hosts.filter((h) => h.shadowRoot !== null).length };
+  `);
+  check('and the page cannot reach into any of Webin\'s shadow roots',
+    sealed.hosts > 0 && sealed.open === 0, `${sealed.open} of ${sealed.hosts} hosts open`);
 
   // Change a property and watch the real engine repaint.
   const beforeRadius = await page.evaluateInExtension(`
@@ -426,14 +439,13 @@ async function editor(chrome, origin) {
   // A real drag on a real grip.
   // The east grip, dragged outward: a west or north grip on an element near the edge of
   // the viewport would be dragged to a negative coordinate, which the browser drops.
-  const grip = await page.evaluate(`
-    const hosts = [...document.documentElement.children].filter((el) => el.hasAttribute('data-webin-owned'));
-    for (const host of hosts) {
-      const handle = host.shadowRoot?.querySelector('.webin-handle[data-handle="e"]')
-        ?? host.shadowRoot?.querySelector('.webin-handle[data-handle="se"]');
-      if (handle) { const r = handle.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, size: r.width }; }
-    }
-    return null;
+  const grip = await page.evaluateInExtension(`
+    const root = window.__webin.webin.editor.overlayRoot;
+    const handle = root?.querySelector('.webin-handle[data-handle="e"]')
+      ?? root?.querySelector('.webin-handle[data-handle="se"]');
+    if (!handle) return null;
+    const r = handle.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, size: r.width };
   `);
   if (grip) {
     check('resize grips are at least 24px of pointer target', grip.size >= 24, `${Math.round(grip.size)}px`);

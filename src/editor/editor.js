@@ -65,6 +65,7 @@ export class Editor extends Emitter {
   #interactions;
   #overlay = null;
   #overlayHost = null;
+  #overlayRoot = null;
 
   #mode = EditMode.OFF;
   /**
@@ -137,6 +138,11 @@ export class Editor extends Emitter {
   get unmatched() { return [...this.#unmatched]; }
   get overrides() { return this.#overrides; }
   get history() { return this.#history; }
+  /**
+   * The overlay's shadow root, for the runtime and the verification harness. Reachable
+   * only from the extension's own world: the root is closed, and this is the one way in.
+   */
+  get overlayRoot() { return this.#overlayRoot; }
 
   /** Everything the panel needs to draw itself. */
   state() {
@@ -334,7 +340,10 @@ export class Editor extends Emitter {
       + ' pointer-events: none; isolation: isolate;';
     this.#doc.documentElement.appendChild(host);
 
-    const shadow = host.attachShadow({ mode: 'open' });
+    // Closed for the same reason the panel's is: the grips are the user's to drag, and a
+    // page that could reach them could resize and move its own elements in the user's
+    // name and have it saved as theirs.
+    const shadow = host.attachShadow({ mode: 'closed' });
     const style = this.#doc.createElement('style');
     style.textContent = overlayTokens + overlayCss;
     shadow.append(style);
@@ -347,6 +356,7 @@ export class Editor extends Emitter {
     shadow.append(marks);
 
     this.#overlayHost = host;
+    this.#overlayRoot = shadow;
     this.#overlay = new Overlay(marks, { view: this.#view });
   }
 
@@ -355,6 +365,7 @@ export class Editor extends Emitter {
     this.#overlay = null;
     this.#overlayHost?.remove();
     this.#overlayHost = null;
+    this.#overlayRoot = null;
   }
 
   // ── Wiring ─────────────────────────────────────────────────────────────

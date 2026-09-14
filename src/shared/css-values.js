@@ -117,8 +117,28 @@ export function isSafeImageValue(value) {
 }
 
 /**
+ * Every CSS function that can name something to fetch.
+ *
+ * `url()` is the one everybody knows. The rest take a bare string where `url()` takes a
+ * URL — `image-set("https://…" 1x)` loads exactly what `url(https://…)` would, and so do
+ * `image()` and `src()`, and `cross-fade()` and `paint()` can wrap any of them — so a rule
+ * that only looked for the word `url` was a rule with a hole in it the width of the CSS
+ * Images spec. `element()` is Firefox-only and `expression()` is IE-only; refusing them
+ * costs nothing and means the list is what it says it is.
+ */
+const FETCHING_FUNCTIONS = /(?:^|[^\w-])(?:-webkit-|-moz-)?(?:url|image-set|image|src|cross-fade|paint|element|expression)\s*\(/i;
+
+/** A quoted string, with its escapes, as CSS tokenises one. */
+const QUOTED = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g;
+
+/**
  * Rejects values that could smuggle extra declarations or fetches into the page (§74).
  * Anything containing a declaration separator, a comment, or a URL is refused outright.
+ *
+ * A backslash outside a string is refused too: CSS reads `\75 rl(` as `url(`, so a
+ * function name can be spelled in a way no list of names would catch. Inside a string an
+ * escape is only ever a character — `content: "\201C"` is a curly quote — so that is
+ * where the one legitimate use of a backslash lives, and the only place it is allowed.
  */
 export function isSafeValue(value) {
   if (value == null) return false;
@@ -127,8 +147,8 @@ export function isSafeValue(value) {
   if (CONTROL_CHARS.test(raw)) return false;
   if (/[;{}<>]/.test(raw)) return false;
   if (raw.includes('/*') || raw.includes('*/')) return false;
-  if (/url\s*\(/i.test(raw)) return false;
-  if (/expression\s*\(/i.test(raw)) return false;
+  if (FETCHING_FUNCTIONS.test(raw)) return false;
+  if (raw.replace(QUOTED, '""').includes('\\')) return false;
   if (/@import/i.test(raw)) return false;
   return true;
 }
@@ -177,6 +197,12 @@ export const ALLOWED_PROPERTIES = new Set([
   // says how fast its hover should be is saying something worth honouring.
   'transition', 'transition-property', 'transition-duration', 'transition-timing-function',
   'transition-delay',
+  // An animation is the same language with a name in it. The name can only ever point at
+  // a `@keyframes` block — the theme's own, which the engine writes, or the site's, which
+  // is the site's to have written — so naming one reaches nothing a transition cannot.
+  'animation', 'animation-name', 'animation-duration', 'animation-timing-function',
+  'animation-delay', 'animation-iteration-count', 'animation-direction', 'animation-fill-mode',
+  'animation-play-state',
   // Transform
   'transform', 'transform-origin', 'rotate', 'scale', 'translate',
   // SVG / media (§104, §105)

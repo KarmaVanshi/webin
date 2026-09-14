@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { MemoryBackend } from '../src/storage/bridge.js';
-import { Store, hostOf, STORAGE_VERSION } from '../src/storage/store.js';
+import { Store, StorageError, hostOf, STORAGE_VERSION } from '../src/storage/store.js';
 import { normaliseTheme } from '../src/shared/theme-format.js';
 
 const theme = (id, name = id) => normaliseTheme({
@@ -17,6 +17,19 @@ test('themes survive a round trip through storage', async () => {
 
   const themes = await store.themes();
   assert.deepEqual(themes.map((t) => t.name), ['Two', 'One'], 'newest first');
+});
+
+test('a write the browser refuses is an error, not a theme that quietly never saved', async () => {
+  // `chrome.storage.local` rejects a write past its quota. The old behaviour was to
+  // swallow that and tell the user their theme was saved; on the next visit it was gone.
+  class FullBackend extends MemoryBackend {
+    async set() { throw new Error('QUOTA_BYTES quota exceeded'); }
+  }
+  const store = new Store(new FullBackend());
+  await assert.rejects(store.saveTheme(theme('one')), StorageError);
+  await assert.rejects(store.importThemes([theme('two')]), StorageError);
+  await assert.rejects(store.deleteTheme('one'), StorageError);
+  assert.deepEqual(await store.themes(), [], 'and nothing pretended to land');
 });
 
 test('saving the same id replaces rather than duplicates', async () => {

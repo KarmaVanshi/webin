@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   normaliseTheme, themeToFile, collectionToFile, parseThemeInput,
   encodeShareCode, decodeShareCode, isShareCode, themeFileName, backdropCss,
+  toBase64Url, MAX_INFLATED,
 } from '../src/shared/theme-format.js';
 import { parseColor, luminance, rgbToHsl } from '../src/shared/color.js';
 
@@ -213,6 +214,24 @@ test('a damaged share code decodes to nothing rather than throwing', async () =>
   assert.equal(await decodeShareCode('just some text'), null);
 });
 
+test('a share code that inflates without end is refused, not allocated', async () => {
+  // Seventy megabytes of nothing deflates to about seventy kilobytes: a code short enough
+  // to paste, from a "friend" who wants the tab to fall over. It must come back as an
+  // unreadable code, and quickly.
+  const { deflateRawSync } = await import('node:zlib');
+  const bomb = deflateRawSync(Buffer.alloc(MAX_INFLATED + 6 * 1024 * 1024));
+  assert.ok(bomb.length < 200_000, `the bomb is small: ${bomb.length} bytes`);
+  const code = 'webin:1z:' + toBase64Url(new Uint8Array(bomb));
+
+  const started = Date.now();
+  assert.equal(await decodeShareCode(code), null);
+  assert.ok(Date.now() - started < 5000, 'and it gave up rather than finishing');
+
+  // The ceiling is far above anything a real code reaches: the same theme, round-tripped.
+  const real = await encodeShareCode(normaliseTheme({ ...MINIMAL, name: 'Still fine' }));
+  assert.equal(parseThemeInput(real, await decodeShareCode(real)).themes[0].name, 'Still fine');
+});
+
 test('a plain theme file imports, and so does a collection', () => {
   const theme = normaliseTheme(MINIMAL);
   const single = parseThemeInput(JSON.stringify(themeToFile(theme)));
@@ -343,4 +362,132 @@ test('a mode that names the layers of the page gradient recolours them', () => {
   assert.equal(variants[0].name, 'Meadow — Sunset');
   assert.deepEqual(variants[0].background.layers.map((l) => l.color), ['#E8B6A1', '#FFB347'], '`sun` is the sunlight layer');
   assert.equal(variants[0].special, undefined, 'and the variant does not carry the modes again');
+});
+
+// ── Motion ──────────────────────────────────────────────────────────────────
+
+test('keyframes are validated stop by stop, declaration by declaration', () => {
+  const theme = normaliseTheme({
+    ...MINIMAL,
+    motion: {
+      keyframes: {
+        rise: { from: { opacity: 0, transform: 'translateY(8px)' }, to: { opacity: 1, transform: 'none' } },
+        // A declaration that cannot be written anywhere else cannot be written here.
+        beacon: { '0%': { 'background-image': 'url(https://x.test/p.gif)', opacity: 0 }, '100%': { opacity: 1 } },
+        // Stops outside the block, and a stop with nothing left in it, are dropped.
+        odd: { '150%': { opacity: 0 }, '50%': { 'clip-path': 'circle(0)' }, '100%': { opacity: 1 } },
+        // Names the shorthand already means something by cannot be keyframes names.
+        infinite: { '0%': { opacity: 0 } },
+        ease: { '0%': { opacity: 0 } },
+        'not a name': { '0%': { opacity: 0 } },
+        // Nothing valid in it: not kept, so a rule naming it names nothing.
+        empty: { '0%': { 'background-image': 'url(x)' } },
+        // Two spellings of one stop are one stop.
+        merged: { '0%,100%': { opacity: 1 }, '0%, 100%': { transform: 'scale(1)' }, '50%': { opacity: 0.5 } },
+      },
+    },
+  });
+  assert.deepEqual(theme.motion.keyframes.rise, {
+    '0%': { opacity: '0', transform: 'translateY(8px)' },
+    '100%': { opacity: '1', transform: 'none' },
+  });
+  assert.deepEqual(theme.motion.keyframes.beacon, { '0%': { opacity: '0' }, '100%': { opacity: '1' } });
+  assert.deepEqual(theme.motion.keyframes.odd, { '100%': { opacity: '1' } });
+  assert.deepEqual(theme.motion.keyframes.merged, { '0%, 100%': { opacity: '1', transform: 'scale(1)' }, '50%': { opacity: '0.5' } });
+  assert.deepEqual(Object.keys(theme.motion.keyframes), ['rise', 'beacon', 'odd', 'merged']);
+});
+
+test('keyframes written as a list of frames with offsets are the same keyframes', () => {
+  const theme = normaliseTheme({
+    ...MINIMAL,
+    keyframes: {
+      pulse: [{ offset: 0, opacity: 1 }, { offset: 0.5, opacity: 0.6 }, { offset: 1, opacity: 1 }],
+      spread: [{ opacity: 0 }, { opacity: 0.5 }, { opacity: 1 }],
+    },
+  });
+  assert.deepEqual(theme.motion.keyframes.pulse, { '0%': { opacity: '1' }, '50%': { opacity: '0.6' }, '100%': { opacity: '1' } });
+  assert.deepEqual(theme.motion.keyframes.spread, { '0%': { opacity: '0' }, '50%': { opacity: '0.5' }, '100%': { opacity: '1' } });
+});
+
+test('a file that describes motion and no colour at all is a theme on a plain ground', () => {
+  const notes = [];
+  const theme = normaliseTheme({
+    name: 'Motion only',
+    keyframes: { rise: { from: { opacity: 0 }, to: { opacity: 1 } } },
+    presets: { entrance: { soft: 'rise' } },
+  }, { inferred: notes });
+  assert.ok(theme);
+  assert.equal(theme.palette.background, '#fafafa');
+  assert.equal(theme.palette.text, '#1f2328');
+  assert.equal(theme.dark, false);
+  assert.match(notes[0], /^background ← a plain light ground/);
+  assert.match(notes[1], /^text ← /);
+  assert.deepEqual(theme.rules.map((r) => [r.target, r.properties.animation]),
+    [['surface', 'rise 600ms ease'], ['heading', 'rise 600ms ease'], ['modal', 'rise 600ms ease'], ['popover', 'rise 600ms ease']],
+    'a keyframes name alone is the animation at the file\'s default length and curve');
+
+  // Still not a theme: a file with no colours and no motion, and a file with one colour.
+  assert.equal(normaliseTheme({ name: 'Nothing', presets: { entrance: { soft: 'rise' } } }), null);
+  assert.equal(normaliseTheme({ palette: { text: '#000' }, keyframes: { rise: { to: { opacity: 1 } } } }), null,
+    'a text colour and no canvas is completed from what it named, or not at all');
+});
+
+test('the file\'s own say over where its animations go beats the presets', () => {
+  const theme = normaliseTheme({
+    ...MINIMAL,
+    duration: { quick: 200, slow: '2s', base: '400ms' },
+    easing: { soft: 'cubic-bezier(0.33, 1, 0.68, 1)', standard: 'ease-in-out' },
+    keyframes: {
+      rise: { from: { opacity: 0 }, to: { opacity: 1 } },
+      breathe: { '0%, 100%': { transform: 'scale(1)' }, '50%': { transform: 'scale(1.03)' } },
+    },
+    animation: {
+      rise: 'rise {duration.base} {easing.soft}',
+      breathe: { keyframes: 'breathe', duration: 'slow', easing: 'standard', iterations: 'infinite' },
+      // Settings, not animations: neither names a keyframes block, so neither is one.
+      transition: 'all 0.2s ease', hoverTransform: 'translateY(-2px)',
+    },
+    presets: { entrance: { soft: 'rise' }, ambient: { breathe: 'breathe' } },
+    apply: {
+      card: 'breathe',
+      'button:hover': 'rise quick soft',
+      primaryButton: { animation: 'rise', loop: true },
+      nav: 'nothing-here',
+    },
+  });
+  const rules = Object.fromEntries(theme.rules.map((r) => [`${r.target}${r.state ? `:${r.state}` : ''}`, r.properties.animation]));
+  assert.equal(rules.surface, 'breathe 2s ease-in-out infinite', '`apply.card` over `presets.entrance`, from fields');
+  assert.equal(rules.heading, 'rise 400ms cubic-bezier(0.33, 1, 0.68, 1)', 'the preset, its tokens resolved');
+  assert.equal(rules['button:hover'], 'rise 200ms cubic-bezier(0.33, 1, 0.68, 1)', 'a shorthand in the file\'s own words');
+  assert.equal(rules['button:primary'], 'rise 400ms cubic-bezier(0.33, 1, 0.68, 1)',
+    'a name that has a shorthand is that shorthand, whatever `loop` says');
+  assert.equal(rules.nav, undefined, 'an animation the file has no keyframes for is not one');
+  assert.equal(theme.effects.transition, 'all 0.2s ease', 'written, so not derived');
+});
+
+test('a scale of durations and easings says how fast a hover is', () => {
+  const scaled = normaliseTheme({
+    ...MINIMAL,
+    duration: { whisper: '120ms', breeze: '280ms', drift: '450ms', season: '2s' },
+    easing: { softIn: 'cubic-bezier(0.33, 0, 0.67, 0)', softOut: 'cubic-bezier(0.33, 1, 0.68, 1)', wind: 'linear' },
+  });
+  assert.equal(scaled.effects.transition, 'all 280ms cubic-bezier(0.33, 1, 0.68, 1)',
+    'nearest a quarter second; easing out, for want of one that goes both ways');
+  const named = normaliseTheme({ ...MINIMAL, motion: { durations: { fast: 100, default: 350 }, easings: { snap: 'ease-in', default: 'ease' } } });
+  assert.equal(named.effects.transition, 'all 350ms ease', 'a step the scale calls the default is the default');
+  assert.equal(normaliseTheme({ ...MINIMAL, duration: { x: 'soon' } }).effects.transition, null, 'a scale of nothing says nothing');
+});
+
+test('the motion is written to the file and read back the same', () => {
+  const theme = normaliseTheme({
+    ...MINIMAL,
+    keyframes: { rise: { from: { opacity: 0 }, to: { opacity: 1 } } },
+    presets: { entrance: 'rise', ambient: 'rise' },
+  });
+  const file = themeToFile(theme);
+  assert.deepEqual(file.theme.motion, { keyframes: { rise: { '0%': { opacity: '0' }, '100%': { opacity: '1' } } } });
+  const back = normaliseTheme(file);
+  assert.deepEqual(back.motion, theme.motion);
+  assert.deepEqual(back.rules, theme.rules);
+  assert.equal(back.rules.filter((r) => r.target === 'surface').length, 1, 'the presets are not read again from the saved file');
 });

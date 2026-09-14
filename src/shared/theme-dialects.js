@@ -17,7 +17,7 @@
 
 import { parseColor } from './color.js';
 import {
-  readComponentRules, readChromeRules, readSelectorRules, readTransition, isGradient,
+  readComponentRules, readChromeRules, readSelectorRules, readMotionRules, readTransition, isGradient,
 } from './theme-rules.js';
 
 /** Blocks a file might keep its named materials in, most deliberate first. */
@@ -379,9 +379,11 @@ export function readDialect(source) {
     .find((v) => v != null && v !== '');
   const grain = typeof texture === 'string' ? !/^(none|off|false|0)$/i.test(texture.trim()) : enabled(texture);
 
-  // Everything the file says about each kind of element, and about its own selectors.
+  // Everything the file says about each kind of element, about its own selectors, and
+  // about what moves.
   const named = readSelectorRules(source);
-  const rules = [...readComponentRules(source), ...readChromeRules(source), ...named.rules];
+  const motion = readMotionRules(source);
+  const rules = [...readComponentRules(source), ...readChromeRules(source), ...named.rules, ...motion.rules];
 
   return {
     radius,
@@ -421,5 +423,6 @@ export function readDialect(source) {
     states: readStates(source),
     rules,
     detect: named.detect,
+    motion: { keyframes: motion.keyframes },
   };
 }

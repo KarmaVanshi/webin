@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Restyle any website in one click, or edit any element by hand. Eighteen designs built in, plus your own to import and share.",
   "minimum_chrome_version": "114",
-  "permissions": ["storage"],
+  "permissions": ["storage", "unlimitedStorage"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_title": "Webin — restyle any website",
@@ -25,7 +25,13 @@
     }
   ],
   "web_accessible_resources": [
-    { "resources": ["src/*"], "matches": ["<all_urls>"] }
+    {
+      "resources": [
+        "src/content/*", "src/editor/*", "src/shared/*",
+        "src/storage/*", "src/themes/*", "src/ui/*"
+      ],
+      "matches": ["<all_urls>"]
+    }
   ],
   "commands": {
     "toggle-panel": {

@@ -851,6 +851,9 @@ export function buildCss(theme, mapping, used, index, fills = ruleFills(theme)) 
       `a:not(${attr(Mark.ON_ACCENT)})`].filter(Boolean);
     rules.push(`${moving.join(', ')} { transition: ${theme.effects.transition} !important; }`);
   }
+  // The theme's keyframes, every one it carries: a rule names one of them by the name
+  // the file gave it, and the code tool can name the rest.
+  rules.push(...keyframesCss(theme));
 
   // ── The theme's own selectors ────────────────────────────────────────
   // Last of all, after the guarantees, exactly as the site stylesheet someone types is:
@@ -858,12 +861,90 @@ export function buildCss(theme, mapping, used, index, fills = ruleFills(theme)) 
   // answer to "but the guard said" is the same one the editor gives — you asked for it.
   rules.push(...selectorRuleCss(theme));
 
+  // After everything, so that at equal specificity it wins over every animation above: a
+  // reader who has asked their system for less motion gets none of the theme's.
+  rules.push(...reducedMotionCss(theme, used));
+
   return `/* Webin — ${theme.name} */\n${rules.join('\n')}`;
 }
 
+/**
+ * What the theme's keyframes are written under on the page.
+ *
+ * The theme's sheet is adopted after the site's own, so a `@keyframes fadeIn` of ours
+ * would replace the site's `fadeIn` for every element that uses it — its toasts, its
+ * spinners — and not only for the ones the theme animates. Under a prefix, the two never
+ * meet: the theme's rules name the prefixed block, and the site's keep naming theirs.
+ */
+const KEYFRAME_PREFIX = 'wb-';
+
+/** The names the theme's keyframes go by, before the prefix. */
+function keyframeNames(theme) {
+  return Object.keys(theme.motion?.keyframes ?? {});
+}
+
+/**
+ * An `animation` value with every keyframes name of the theme's own prefixed.
+ *
+ * A name is a whole word between spaces or commas. A word that names none of the theme's
+ * keyframes is left as written — a time, a curve, a keyword, or a block the site defines.
+ */
+function animationValue(value, names) {
+  let out = String(value);
+  for (const name of names) {
+    out = out.replace(new RegExp(`(^|[\\s,])${name}(?=[\\s,]|$)`, 'g'), `$1${KEYFRAME_PREFIX}${name}`);
+  }
+  return out;
+}
+
+/** The properties whose value may name a keyframes block. */
+const NAMES_KEYFRAMES = new Set(['animation', 'animation-name']);
+
 /** A rule's declarations, every one marked `!important`, as the token rules are. */
-function declarations(properties) {
-  return Object.entries(properties).map(([property, value]) => `${property}: ${value} !important;`).join(' ');
+function declarations(properties, names = []) {
+  return Object.entries(properties)
+    .map(([property, value]) => `${property}: ${NAMES_KEYFRAMES.has(property) ? animationValue(value, names) : value} !important;`)
+    .join(' ');
+}
+
+/**
+ * The theme's `@keyframes` blocks, under the prefix.
+ *
+ * Nothing inside is `!important`: a declaration in a keyframe cannot be, and one marked so
+ * is ignored, which would leave the animation with nothing to animate.
+ */
+function keyframesCss(theme) {
+  const out = [];
+  for (const [name, stops] of Object.entries(theme.motion?.keyframes ?? {})) {
+    const body = Object.entries(stops)
+      .map(([stop, properties]) => `${stop} { ${Object.entries(properties).map(([p, v]) => `${p}: ${v};`).join(' ')} }`)
+      .join(' ');
+    out.push(`@keyframes ${KEYFRAME_PREFIX}${name} { ${body} }`);
+  }
+  return out;
+}
+
+/** True for a rule that sets something in motion. */
+function animates(rule) {
+  return Object.keys(rule.properties ?? {}).some((p) => NAMES_KEYFRAMES.has(p));
+}
+
+/**
+ * Every selector the theme animates, told to hold still under `prefers-reduced-motion`.
+ *
+ * One rule for all of them, at the end of the sheet, so it wins on order at the same
+ * specificity as the rules it silences. The theme's transition is left alone: a hover
+ * that arrives in a quarter of a second is not the kind of motion the setting is about.
+ */
+function reducedMotionCss(theme, used) {
+  const selectors = new Set();
+  for (const rule of theme.rules ?? []) {
+    if (!animates(rule)) continue;
+    const selector = rule.target ? targetSelector(rule.target, rule.state, used, rule.part ?? null) : rule.selector;
+    if (selector) selectors.add(selector);
+  }
+  if (!selectors.size) return [];
+  return [`@media (prefers-reduced-motion: reduce) { ${[...selectors].join(', ')} { animation: none !important; } }`];
 }
 
 /**
@@ -879,7 +960,8 @@ const STATE_SUFFIX = {
   active: ':active',
   focus: ':focus-visible',
   placeholder: '::placeholder',
-  // Every button that was not the page's call to action; see `Mark.PRIMARY`.
+  // The page's call to action, and every button that was not; see `Mark.PRIMARY`.
+  primary: `[${TOKEN_ATTR}~="pr"]`,
   secondary: `:not([${TOKEN_ATTR}~="pr"])`,
   secondaryHover: `:not([${TOKEN_ATTR}~="pr"]):hover`,
 };
@@ -937,12 +1019,13 @@ function targetSelector(target, state, used, part = null) {
 /** The rules written against targets, base state first so a hover can override it. */
 function targetRuleCss(theme, used) {
   const out = [];
+  const names = keyframeNames(theme);
   const list = (theme.rules ?? []).filter((rule) => rule.target);
   const ordered = [...list.filter((r) => !r.state), ...list.filter((r) => r.state)];
   for (const rule of ordered) {
     const selector = targetSelector(rule.target, rule.state, used, rule.part ?? null);
     if (!selector) continue;
-    const inner = `${selector} { ${declarations(rule.properties)} }`;
+    const inner = `${selector} { ${declarations(rule.properties, names)} }`;
     out.push(rule.media ? `${rule.media} { ${inner} }` : inner);
   }
   return out;
@@ -951,9 +1034,10 @@ function targetRuleCss(theme, used) {
 /** The rules written against the theme's own selectors, as written. */
 function selectorRuleCss(theme) {
   const out = [];
+  const names = keyframeNames(theme);
   for (const rule of theme.rules ?? []) {
     if (!rule.selector) continue;
-    const inner = `${rule.selector} { ${declarations(rule.properties)} }`;
+    const inner = `${rule.selector} { ${declarations(rule.properties, names)} }`;
     out.push(rule.media ? `${rule.media} { ${inner} }` : inner);
   }
   return out;

@@ -234,8 +234,10 @@ also name selectors outright — a `selectors` map, a `rules` list, or a `css` s
 those are written last, after the readability guarantees, exactly as a stylesheet you type
 in the editor is. What a rule paints is what the guarantee measures text against, so white
 on a black button stays white. Every declaration, read or written, goes through the same
-gate as the editor's: the property allowlist and the value checks, no `url()`, no way to
-close a declaration. Reading widely is not trusting widely.
+gate as the editor's: the property allowlist and the value checks — no `url()`, and none
+of the other functions that fetch (`image-set()`, `image()`, `src()`, `cross-fade()`,
+`paint()`), no backslash outside a string so a function cannot be spelled in escapes, no
+way to close a declaration. Reading widely is not trusting widely.
 
 The general statement is read before the specific one, so the specific one wins: a
 `cards.shadow` beats `effects.shadow`, and `effects.shadow` — kept as written, `none`
@@ -254,6 +256,22 @@ print (`typography.small`) lands on `<small>` and figure captions. A file that c
 night beside its day — `special.nightMode`, a `sunsetMode` that recolours the sky — has
 described a second theme, and the importer offers it as one. The files under `themes/`
 are the acceptance suite for all of this: each one renders in full.
+
+**4c. Motion.** A file may be nothing but motion — `keyframes`, an `animation` shorthand
+for each, a scale of `duration`s and `easing`s the shorthands are written in terms of, and
+`presets` saying what each is for — and that is a theme too. Its keyframes are validated
+stop by stop through the same gate as every declaration, and written to the page under a
+`wb-` prefix so a `fadeIn` of the theme's never replaces the site's own `fadeIn` for the
+toasts and spinners that use it. Where they go is read from the file's categories: an
+*entrance* is what arrives, so the page's surfaces and headings come in with it and the
+popping kind of entrance is what a modal or a popover opens with; an *ambient* animation
+is what idles, and the one thing a design system leaves breathing is the call to action.
+An `apply` block (`card: "breathe"`, `"button:hover": "rise quick soft"`) is the file's
+own say and beats the presets; a shorthand may name the file's own durations and easings,
+`{duration.drift}` or simply `drift`. The scale also says how fast a hover is when no
+`transition` was written. A file with motion and not one colour is given a plain light
+ground, and told so in the preview. Everything that moves holds still under
+`prefers-reduced-motion`.
 
 All of it is opt-in. A theme that declares no roles and carries no rules emits nothing for
 them and stamps nothing for them, which is why the eighteen shipped presets are untouched.
@@ -630,15 +648,25 @@ fontFamily: 'Georgia; } * { background: url(https://evil.example/beacon) } .x {'
 // → null. The theme still applies; it just uses the page's own font.
 ```
 
-No theme carries raw CSS at all. The gradient behind a glass theme used to be a CSS
-string, which is why it could only ever be honoured from a preset the extension shipped —
-one `url()` from a beacon on every page you themed, one `}` from writing its own rules
-into somebody else's site. It is stored as a base colour and a few positioned blobs now,
-and the engine writes the CSS from them, so a backdrop out of a stranger's file is exactly
-as safe as one of ours. A page's canvas must also be opaque: a see-through ground paints
-nothing, and leaves the contrast guarantee measuring text against a colour that was never
-there. Theme names are escaped, never parsed, and reach the DOM as text. There are tests
-for each of these.
+No CSS a theme carries reaches the page as it was written. A `css` string or a `rules`
+list is parsed into selectors and declarations, and each declaration is rebuilt through
+the gate above — so a selector can be anything the charset allows, but what it paints
+cannot fetch, cannot comment, and cannot close the rule and start another. The gradient
+behind a glass theme is stored as a base colour and a few positioned blobs, and the
+engine writes the CSS from them, so a backdrop out of a stranger's file is exactly as safe
+as one of ours. A page's canvas must also be opaque: a see-through ground paints nothing,
+and leaves the contrast guarantee measuring text against a colour that was never there.
+Theme names are escaped, never parsed, and reach the DOM as text. A share code is
+inflated under a ceiling, so one built to unpack into gigabytes is refused rather than
+allocated. There are tests for each of these.
+
+The page is the other party that is not trusted. The panel and the editor's overlay live
+in **closed** shadow roots, so a script on the page can see that Webin is there and
+nothing more: it cannot find the delete button and press it, cannot read the names of the
+themes you own, and cannot type an address into the importer and have the extension go
+and fetch it. An exported file is handed over through a link that exists for one click
+inside that closed root, never in the page's own body where its URL could be read. The
+extension's service worker answers only its own scripts.
 
 ---
 

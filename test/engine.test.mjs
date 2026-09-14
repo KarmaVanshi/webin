@@ -774,3 +774,99 @@ test('anime-sth: its sunset and its night are themes of their own, and its small
   assert.match(engine.css, /small, figcaption \{ font-family: Nunito !important; font-weight: 500 !important; color: #71806d !important; \}/,
     '`typography.small`');
 });
+
+// ── Motion ──────────────────────────────────────────────────────────────────
+// A file may be nothing but motion: keyframes, an animation for each, and which go where.
+// The keyframes are written under the theme's prefix, the rules name them, and a reader
+// who has asked for less motion gets none of it.
+
+test('new-ghibli: a motion file renders — keyframes under the prefix, presets on the page, and a plain ground', () => {
+  const text = readFileSync(new URL('../themes/new-ghibli.json', import.meta.url), 'utf8');
+  const { themes, error, inferred } = parseThemeInput(text);
+  assert.equal(error, null, 'a file with no colours is not a file with nothing in it');
+  const theme = themes[0];
+  assert.equal(theme.name, 'Studio Ghibli Motion');
+  assert.match(inferred[0], /^background ← a plain light ground/, 'and the ground it got is said so');
+  assert.equal(Object.keys(theme.motion.keyframes).length, 17, 'every keyframes block in the file');
+  assert.deepEqual(theme.motion.keyframes.float, { '0%, 100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-8px)' } });
+  assert.equal(theme.effects.transition, 'all 280ms cubic-bezier(0.65, 0, 0.35, 1)',
+    'the step of its duration scale nearest a quarter second, and the easing that goes both ways');
+
+  const dom = makeDom(`<html><body style="background-color:#ffffff">
+    <h2 id="h">Title</h2>
+    <div id="card" style="background-color:#f2f2f2">A card</div>
+    <button id="cta" style="background-color:#1a73e8">Buy</button>
+    <button id="plain" style="background-color:#f2f2f2">Cancel</button>
+    <div role="dialog" id="modal" style="background-color:#ffffff">Modal</div>
+  </body></html>`);
+  stubLayout(dom, { width: 300, height: 120 });
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(theme, pageTokens());
+  const css = engine.css;
+
+  // The library, every block of it, under the prefix and with nothing marked important.
+  assert.match(css, /@keyframes wb-softRise \{ 0% \{ opacity: 0; transform: translateY\(16px\); \} 100% \{ opacity: 1; transform: translateY\(0\); \} \}/);
+  assert.match(css, /@keyframes wb-float \{ 0%, 100% \{ transform: translateY\(0\); \} 50% \{ transform: translateY\(-8px\); \} \}/);
+  assert.equal((css.match(/@keyframes wb-/g) ?? []).length, 17);
+  assert.ok(!/@keyframes[^\n]*!important/.test(css), 'an important declaration inside a keyframe is ignored by the browser');
+
+  // The presets: the entrance on what arrives, the popping kind on what opens, the
+  // ambient one on the call to action — each the file's own shorthand, name prefixed.
+  assert.match(css, /\[data-webin~="sf"\] \{ animation: wb-softRise 600ms cubic-bezier\(0\.22, 0\.61, 0\.36, 1\) !important; \}/, '`presets.entrance.soft`');
+  assert.match(css, /h1, h2, h3, h4, h5, h6 \{ animation: wb-softRise 600ms/);
+  assert.match(css, /\[data-webin~="ml"\] \{ animation: wb-magicAppear 700ms cubic-bezier\(0\.34, 1\.2, 0\.64, 1\) !important; \}/, '`presets.entrance.magic`');
+  assert.match(css, /\[data-webin~="bt"\]\[data-webin~="pr"\] \{ animation: wb-float 4s cubic-bezier\(0\.37, 0, 0\.63, 1\) infinite !important; \}/,
+    '`presets.ambient.float`, as `animation.float` wrote it — not the `float` duration, not the `breath` easing');
+  assert.ok(!css.includes('~="pv"'), 'nothing on the page is a popover, so the popover rule is not written');
+  assert.ok(marksOf(dom, 'cta').includes('pr') && !marksOf(dom, 'plain').includes('pr'));
+
+  // Last in the sheet, so it wins on order: nothing moves for a reader who asked for that.
+  const reduced = css.lastIndexOf('@media (prefers-reduced-motion: reduce)');
+  assert.ok(reduced > css.lastIndexOf('@keyframes'), 'after every keyframe');
+  assert.ok(reduced > css.lastIndexOf('animation: wb-'), 'after every rule that animates');
+  assert.match(css.slice(reduced), /\{ \[data-webin~="sf"\], h1, h2, h3, h4, h5, h6, \[data-webin~="ml"\], \[data-webin~="bt"\]\[data-webin~="pr"\] \{ animation: none !important; \} \}/);
+  assert.ok(!css.includes('url('), 'and still nothing can fetch');
+});
+
+test('an animation names the theme\'s keyframes by the file\'s name and the site\'s by theirs', () => {
+  const theme = normaliseTheme({
+    palette: { background: '#fff', text: '#000' },
+    motion: { keyframes: { rise: { from: { opacity: 0 }, to: { opacity: 1 } } } },
+    rules: [
+      { target: 'surface', properties: { animation: 'rise 300ms ease, spin 2s linear infinite' } },
+      { selector: '.hero', properties: { 'animation-name': 'rise', 'animation-duration': '1s' } },
+      // A word that only contains the name is a different word.
+      { target: 'heading', properties: { animation: 'sunrise 1s' } },
+    ],
+  });
+  const dom = fullDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(theme, pageTokens());
+  const css = engine.css;
+  assert.match(css, /\[data-webin~="sf"\] \{ animation: wb-rise 300ms ease, spin 2s linear infinite !important; \}/,
+    '`rise` is the theme\'s and is prefixed; `spin` is the site\'s and is left alone');
+  assert.match(css, /\.hero \{ animation-name: wb-rise !important; animation-duration: 1s !important; \}/);
+  assert.match(css, /h1, h2, h3, h4, h5, h6 \{ animation: sunrise 1s !important; \}/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{ \[data-webin~="sf"\], \.hero, h1, h2, h3, h4, h5, h6 \{ animation: none !important; \} \}/,
+    'the theme\'s own selectors hold still too, in the order the rules were written');
+});
+
+test('a theme with no motion writes no keyframes and no reduced-motion rule', () => {
+  const theme = themeFile('ghibli');
+  assert.deepEqual(theme.motion, { keyframes: {} }, '`animation.softFloat` names no keyframes');
+  const dom = fullDom();
+  const engine = new ThemeEngine({ doc: dom.window.document, view: dom.window });
+  engine.apply(theme, pageTokens());
+  assert.ok(!engine.css.includes('@keyframes'));
+  assert.ok(!engine.css.includes('prefers-reduced-motion'));
+});
+
+test('the motion survives a round trip through the file format and a share code', async () => {
+  const { themeToFile, encodeShareCode, decodeShareCode } = await import('../src/shared/theme-format.js');
+  const theme = themeFile('new-ghibli');
+  const back = normaliseTheme(themeToFile(theme));
+  assert.deepEqual(back.motion, theme.motion);
+  assert.deepEqual(back.rules, theme.rules, 'and the presets are not read a second time from the saved file');
+  const decoded = await decodeShareCode(await encodeShareCode(theme));
+  assert.deepEqual(normaliseTheme(decoded).motion, theme.motion);
+});

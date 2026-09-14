@@ -105,7 +105,12 @@ export class Panel extends Emitter {
       + ' pointer-events: none; isolation: isolate;';
     this.#doc.documentElement.appendChild(host);
 
-    const shadow = host.attachShadow({ mode: 'open' });
+    // Closed, so the page cannot get at what is inside. An open root would let any script
+    // on the page find the delete button and click it, read every theme name the user
+    // owns, or type an address into the importer and press Fetch — the panel is the
+    // user's, and the page is not the user. The root is kept privately below; everything
+    // that needs it gets it from there.
+    const shadow = host.attachShadow({ mode: 'closed' });
     const style = this.#doc.createElement('style');
     style.textContent = panelCss;
     shadow.append(style);

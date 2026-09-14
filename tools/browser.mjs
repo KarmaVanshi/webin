@@ -220,8 +220,18 @@ class Session {
     return result.result.value;
   }
 
-  async screenshot(path) {
-    const { data } = await this.send('Page.captureScreenshot', { format: 'png' });
+  /**
+   * Saves what the viewport shows, at the one size the Chrome Web Store accepts.
+   *
+   * The store takes screenshots at exactly 1280×800 (or 640×400) and nothing else, and
+   * the viewport of a 1280×900 window is 1280×813 — thirteen rows too tall to upload. So
+   * the top 1280×800 is what is kept, which is also the part a store visitor would look at.
+   */
+  async screenshot(path, { width = 1280, height = 800 } = {}) {
+    const { data } = await this.send('Page.captureScreenshot', {
+      format: 'png',
+      clip: { x: 0, y: 0, width, height, scale: 1 },
+    });
     await writeFile(path, Buffer.from(data, 'base64'));
     return path;
   }

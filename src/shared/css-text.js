@@ -45,6 +45,12 @@ const OURS = /webin/i;
 const COMMENTS = /\/\*[\s\S]*?\*\//g;
 
 /**
+ * A comment blanked out rather than cut out, so that every offset into the text is still
+ * an offset into the text somebody typed. `writeRule` depends on that.
+ */
+const blankComments = (text) => String(text ?? '').replace(COMMENTS, (m) => m.replace(/[^\n]/g, ' '));
+
+/**
  * `{ borderRadius: '8px' }` as the CSS someone would have typed.
  *
  * Property names come back in the spelling CSS uses, not the spelling JavaScript uses, so
@@ -57,6 +63,10 @@ export function formatDeclarations(properties) {
     .join('\n');
 }
 
+/** One spelling for a value, so `Red` and `red ` are the same answer. */
+const same = (a, b) => String(a ?? '').trim().replace(/\s+/g, ' ').toLowerCase()
+  === String(b ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+
 /**
  * A block of declarations, validated one at a time.
  *
@@ -65,9 +75,19 @@ export function formatDeclarations(properties) {
  * make the editor harder to use without making it any safer, since the four were each
  * checked on their own merits anyway.
  *
+ * With a `base` — the site's own declarations, when one of its rules is being edited —
+ * only what says something the site did not is kept: a value changed, or a property
+ * added. A line left as the site wrote it is the site's line still, and so is a line
+ * removed; the site's declaration is not ours to delete, only to overrule. Such lines are
+ * passed over before the gate, not refused by it: a site's `font: inherit` is not
+ * something the editor writes, and it is not something the editor is being asked to.
+ * Writing the whole block instead would freeze every declaration as `!important`,
+ * including the ones a stronger rule of the site's had beaten, and change the page in
+ * ways nobody asked for.
+ *
  * @returns {{properties: Object<string,string>, errors: string[]}}
  */
-export function parseDeclarations(text) {
+export function parseDeclarations(text, { base = null } = {}) {
   const properties = {};
   const errors = [];
 
@@ -86,6 +106,9 @@ export function parseDeclarations(text) {
     // from what the site's own stylesheets are doing. Accepting it in the text would let a
     // declaration outrank the guarantees the engine puts after it.
     const value = line.slice(colon + 1).replace(/!\s*important\s*$/i, '').trim();
+
+    const name = property.toLowerCase();
+    if (base && name in base && same(base[name], value)) continue;
 
     const checked = validateDeclaration(property, value);
     if (checked.ok) properties[checked.property] = checked.value;
@@ -113,7 +136,8 @@ export function isSafeSelector(selector) {
 export function formatStylesheet(rules) {
   return (Array.isArray(rules) ? rules : [])
     .map((rule) => {
-      const body = formatDeclarations(rule.properties).split('\n').map((l) => `  ${l}`).join('\n');
+      const indent = rule.media ? '  ' : '';
+      const body = formatDeclarations(rule.properties).split('\n').map((l) => `${indent}  ${l}`).join('\n');
       const inner = rule.media ? `${rule.media} {\n  ${rule.selector} {\n${body}\n  }\n}` : null;
       return inner ?? `${rule.selector} {\n${body}\n}`;
     })
@@ -130,15 +154,22 @@ export function formatStylesheet(rules) {
  * @returns {{rules: Array<{selector:string, media:string|null, properties:object}>, errors: string[]}}
  */
 export function parseStylesheet(text) {
-  const source = String(text ?? '').replace(COMMENTS, '').slice(0, SHEET_LIMIT);
+  const source = blankComments(text).slice(0, SHEET_LIMIT);
   const rules = [];
   const errors = [];
   readBlocks(source, null, rules, errors);
   return { rules: rules.slice(0, RULE_LIMIT), errors };
 }
 
-/** One level of blocks, recursing once for the inside of a media query. */
-function readBlocks(source, media, rules, errors) {
+/**
+ * One level of blocks, recursing once for the inside of a media query.
+ *
+ * Each rule remembers where it sits in the text — `span`, as offsets into the whole
+ * stylesheet — so that one rule can be rewritten in place by `writeRule` without the rest
+ * of what somebody typed being reformatted around it. `base` is what makes the offsets
+ * absolute inside a media block.
+ */
+function readBlocks(source, media, rules, errors, base = 0) {
   let index = 0;
 
   while (index < source.length && rules.length < RULE_LIMIT) {
@@ -148,6 +179,8 @@ function readBlocks(source, media, rules, errors) {
       return;
     }
 
+    const lead = source.slice(index, open).search(/\S/);
+    const start = base + index + Math.max(lead, 0);
     const prelude = source.slice(index, open).trim();
     const close = matchingBrace(source, open);
     if (close === -1) {
@@ -165,7 +198,7 @@ function readBlocks(source, media, rules, errors) {
         errors.push(`"${clip(prelude)}" is not something the editor can use.`);
         continue;
       }
-      readBlocks(body, prelude.replace(/\s+/g, ' '), rules, errors);
+      readBlocks(body, prelude.replace(/\s+/g, ' '), rules, errors, base + open + 1);
       continue;
     }
 
@@ -176,7 +209,14 @@ function readBlocks(source, media, rules, errors) {
 
     const { properties, errors: bad } = parseDeclarations(body);
     errors.push(...bad.map((reason) => `${clip(prelude)} — ${reason}`));
-    if (Object.keys(properties).length) rules.push({ selector: prelude, media, properties });
+    if (Object.keys(properties).length) {
+      rules.push({
+        selector: prelude,
+        media,
+        properties,
+        span: { start, end: base + close + 1, bodyStart: base + open + 1, bodyEnd: base + close },
+      });
+    }
   }
 }
 
@@ -191,6 +231,63 @@ function matchingBrace(source, open) {
     }
   }
   return -1;
+}
+
+/** The same media query however it was spaced, and `null` for none. */
+const mediaKey = (media) => (media
+  ? String(media).trim().toLowerCase().replace(/\s+/g, ' ').replace(/\s*([:(),<>=])\s*/g, '$1')
+  : null);
+const selectorKey = (selector) => String(selector ?? '').trim().replace(/\s+/g, ' ');
+
+/**
+ * One rule written into a stylesheet's text, leaving everything else as typed.
+ *
+ * The site stylesheet is a piece of text the user owns, comments and half-finished lines
+ * included, and rebuilding it from parsed rules would throw those away. So a rule is
+ * spliced in: the body of an existing rule with the same selector and media query is
+ * replaced, a new rule is added at the end, and a rule given no declarations is removed,
+ * along with a media block left empty by its going.
+ *
+ * Where two rules already share the selector, the last is the one edited, since with every
+ * declaration marked important it is the one the page was listening to.
+ */
+export function writeRule(text, { selector, media = null, properties = {} }) {
+  const source = String(text ?? '');
+  const wanted = { selector: selectorKey(selector), media: mediaKey(media) };
+  const { rules } = parseStylesheet(source);
+  const found = rules.filter((rule) => selectorKey(rule.selector) === wanted.selector
+    && mediaKey(rule.media) === wanted.media).pop();
+  const entries = Object.entries(properties ?? {});
+
+  if (!entries.length) {
+    if (!found) return source;
+    const { start, end } = found.span;
+    // Take the line with it: the indent before the rule and the newline that ended it.
+    const before = source.slice(0, start).match(/[ \t]*$/)[0].length;
+    const after = source.slice(end).match(/^[ \t]*\n?/)[0].length;
+    const cut = source.slice(0, start - before) + source.slice(end + after);
+    // A media block emptied by the removal goes too; it was only ever there for the rule.
+    const tidy = cut.replace(/@media[^{}]*\{\s*\}[ \t]*\n?/gi, '').replace(/\n{3,}/g, '\n\n');
+    return tidy.trim() ? tidy.replace(/\s+$/, '\n') : '';
+  }
+
+  if (found) {
+    const { bodyStart, bodyEnd, start } = found.span;
+    // Indent to match the rule's own line, so a rule inside a media block stays nested.
+    const indent = source.slice(0, start).match(/[ \t]*$/)[0];
+    const body = entries.map(([property, value]) => `${indent}  ${property}: ${value};`).join('\n');
+    return `${source.slice(0, bodyStart)}\n${body}\n${indent}${source.slice(bodyEnd)}`;
+  }
+
+  const rule = formatStylesheet([{ selector: selectorKey(selector), media: media || null, properties }]);
+  if (!source.trim()) return `${rule}\n`;
+  const gap = source.endsWith('\n\n') ? '' : source.endsWith('\n') ? '\n' : '\n\n';
+  const appended = `${source}${gap}${rule}\n`;
+  // A rule added after a half-typed one — `.b {` with no end — would sit inside it and
+  // never be read. Then it goes in front instead, where the parser still gets to it.
+  const readable = parseStylesheet(appended).rules.some((r) => selectorKey(r.selector) === wanted.selector
+    && mediaKey(r.media) === wanted.media);
+  return readable ? appended : `${rule}\n\n${source}`;
 }
 
 /**

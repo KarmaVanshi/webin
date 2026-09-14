@@ -499,6 +499,72 @@ async function editor(chrome, origin) {
   check('a saved edit is back after a reload', restored.marked > 0 && /22px/.test(restored.radius ?? ''),
     `${restored.marked} restored, radius ${restored.radius}`);
 
+  // One of the site's own rules, edited from the Styles list, through the panel's real
+  // DOM: the pencil, the box it becomes, the caret landing in it, Apply, and the bin.
+  const opened = await page.evaluateInExtension(`
+    const webin = window.__webin.webin;
+    await webin.open();
+    webin.panel.emit('action', { action: 'mode', value: 'edit' });
+    await new Promise((r) => setTimeout(r, 200));
+    webin.editor.select(document.getElementById('cta'));
+    await new Promise((r) => setTimeout(r, 200));
+    const sh = webin.panel.shadow;
+    const pencil = [...sh.querySelectorAll('[data-action="edit-rule"]')]
+      .find((b) => b.dataset.value.includes('.cta'));
+    if (!pencil) return { pencil: false };
+    pencil.click();
+    await new Promise((r) => setTimeout(r, 150));
+    const area = sh.querySelector('[data-code="rule"]');
+    if (!area) return { pencil: true, area: false };
+    return {
+      pencil: true, area: true, focused: sh.activeElement === area, prefilled: area.value,
+      selected: area.selectionEnd - area.selectionStart, rows: area.clientHeight >= area.scrollHeight - 1,
+    };
+  `);
+  check('a site rule opens in place, prefilled with what the site wrote',
+    opened.area === true && /padding: 10px 18px;/.test(opened.prefilled ?? ''),
+    opened.pencil === false ? 'no pencil for .cta' : opened.area === false ? 'no box appeared' : opened.prefilled.split('\n').join(' '));
+  check('the box takes the caret, and shows the whole rule',
+    opened.focused === true && opened.selected === 0 && opened.rows === true,
+    `focused ${opened.focused}, ${opened.selected} chars selected, whole ${opened.rows}`);
+  await page.screenshot(join(shots, 'styles-editing.png'));
+
+  const applied = await page.evaluateInExtension(`
+    const webin = window.__webin.webin;
+    const sh = webin.panel.shadow;
+    const cta = document.getElementById('cta');
+    const area = sh.querySelector('[data-code="rule"]');
+    area.value = area.value.replace('10px 18px', '4px 40px');
+    area.dispatchEvent(new Event('input', { bubbles: true }));
+    sh.querySelector('[data-action="apply-rule-css"]').click();
+    await new Promise((r) => setTimeout(r, 250));
+    const first = sh.querySelector('.webin-rule');
+    return {
+      padding: getComputedStyle(cta).padding,
+      yours: Boolean(first?.classList.contains('is-yours')),
+      struck: [...sh.querySelectorAll('.webin-rule:not(.is-yours) .webin-decl.is-overridden')]
+        .map((d) => d.textContent.replace(/\\s+/g, ' ').trim()),
+      open: Boolean(sh.querySelector('[data-code="rule"]')),
+      siteCss: webin.editor.siteCss(),
+    };
+  `);
+  check('the edited value reaches the page as your version of the rule',
+    applied.padding === '4px 40px' && /\.cta \{\n {2}padding: 4px 40px;\n\}/.test(applied.siteCss ?? ''),
+    `padding ${applied.padding}; sheet ${JSON.stringify(applied.siteCss)}`);
+  check('the list shows yours on top, the site\'s line struck through, and the box closed',
+    applied.yours === true && (applied.struck ?? []).some((line) => line.startsWith('padding')) && applied.open === false,
+    `yours ${applied.yours}, struck ${JSON.stringify(applied.struck)}, open ${applied.open}`);
+  await page.screenshot(join(shots, 'styles-yours.png'));
+
+  const binned = await page.evaluateInExtension(`
+    const webin = window.__webin.webin;
+    webin.panel.shadow.querySelector('[data-action="remove-rule"]')?.click();
+    await new Promise((r) => setTimeout(r, 250));
+    return { padding: getComputedStyle(document.getElementById('cta')).padding, left: webin.editor.siteCss() };
+  `);
+  check('the bin takes it away again', binned.padding === '10px 18px' && binned.left === '',
+    `padding ${binned.padding}; sheet ${JSON.stringify(binned.left)}`);
+
   // And it can all be taken away again.
   const reset = await page.evaluateInExtension(`
     const webin = window.__webin.webin;

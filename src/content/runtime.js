@@ -23,6 +23,7 @@ import { MutationMonitor } from './monitor.js';
 import { Panel } from '../ui/panel.js';
 import { EditStore } from '../storage/edits.js';
 import { Editor } from '../editor/editor.js';
+import { parseRuleKey } from '../editor/cascade.js';
 import { ensureReadable } from '../shared/color.js';
 import { EditMode } from '../shared/types.js';
 import { backgroundFit } from '../shared/image.js';
@@ -377,6 +378,10 @@ export class Webin {
       case 'background-image': return this.#setBackgroundImage(value);
       case 'apply-element-css': return this.#applyCss('element', value);
       case 'apply-site-css': return this.#applyCss('site', value);
+      case 'edit-rule': return this.#editRule(value);
+      case 'cancel-rule': return this.#panel.setState({ ruleEdit: null });
+      case 'apply-rule-css': return this.#applyRule(value);
+      case 'remove-rule': return this.#removeRule(value);
       case 'import-text': return this.#import(this.#panel.importText);
       case 'import-url': return this.#importFromUrl(this.#panel.importUrl);
       case 'confirm-import': return this.#confirmImport();
@@ -484,6 +489,60 @@ export class Webin {
         editor: this.#editorState(),
         codeErrors: { ...(this.#panel.state.codeErrors ?? {}), [scope]: errors },
         codeStatus: { ...(this.#panel.state.codeStatus ?? {}), [scope]: status },
+      });
+    });
+  }
+
+  /**
+   * Opens one of the site's rules for editing, in place, in the Styles list.
+   *
+   * Panel state rather than editor state: which rule is open is about looking, and it is
+   * tied to the element it was opened on, so selecting something else closes it without
+   * anything having to be told.
+   */
+  #editRule(key) {
+    const id = this.#panel.state.editor?.selection?.id ?? null;
+    if (!id || !key) return;
+    this.#panel.setState({
+      ruleEdit: { key: id, rule: key },
+      codeErrors: { ...(this.#panel.state.codeErrors ?? {}), rule: [] },
+      codeStatus: { ...(this.#panel.state.codeStatus ?? {}), rule: null },
+    });
+  }
+
+  /**
+   * Writes your version of a site rule. Clean, the rule closes and the list shows the
+   * result — yours at the top, the site's beaten line struck through. Anything refused is
+   * named under the box and the box stays open, next to the line it is about.
+   */
+  #applyRule(value) {
+    const { selector, media = null, base = {}, css = '' } = value ?? {};
+    if (!selector) return;
+    this.#withEditor((editor) => {
+      const result = editor.applyRuleCss({ selector, media, base }, css);
+      const errors = result.errors ?? [];
+      const status = errors.length
+        ? `${result.written} written, ${errors.length} refused`
+        : null;
+      this.#panel.setState({
+        editor: this.#editorState(),
+        ruleEdit: errors.length ? this.#panel.state.ruleEdit : null,
+        codeErrors: { ...(this.#panel.state.codeErrors ?? {}), rule: errors },
+        codeStatus: { ...(this.#panel.state.codeStatus ?? {}), rule: status },
+      });
+    });
+  }
+
+  /** Takes your version of a rule out again, leaving the site's own in the list. */
+  #removeRule(key) {
+    const rule = parseRuleKey(key);
+    if (!rule) return;
+    this.#withEditor((editor) => {
+      editor.removeRule(rule);
+      const open = this.#panel.state.ruleEdit;
+      this.#panel.setState({
+        editor: this.#editorState(),
+        ruleEdit: open && open.rule === key ? null : open,
       });
     });
   }

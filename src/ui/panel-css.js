@@ -610,11 +610,28 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   background: var(--surface);
   font-family: var(--font-mono); font-size: var(--text-micro); line-height: 1.55;
 }
-.webin-rule-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); min-width: 0; }
+.webin-rule-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-width: 0; min-height: 22px; }
 .webin-rule-sel { flex: 1; min-width: 0; color: var(--fg); font-weight: 600; overflow-wrap: anywhere; }
 .webin-rule-src { flex: none; max-width: 40%; color: var(--fg-dim); font-family: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The pencil and the bin, kept small and quiet: a rule is a thing to read first, and the
+   buttons only need to be findable once you want them. Still 22px tall — big enough for
+   a pointer — and named in full for a screen reader. */
+.webin-rule-acts { display: flex; flex: none; gap: 1px; margin: -3px -4px -3px 0; }
+.webin-rule-acts .webin-icon-btn { min-width: 22px; min-height: 22px; }
+.webin-rule-acts .webin-icon-btn svg { width: 12px; height: 12px; }
 .webin-rule-media { color: var(--fg-dim); overflow-wrap: anywhere; }
 .webin-rule-body { display: flex; flex-direction: column; padding-left: var(--space-3); }
+/* Yours: an accent edge as well as the word, so it is never the colour alone that says so. */
+.webin-rule.is-yours { border-left: 3px solid var(--accent); }
+.webin-rule.is-yours .webin-rule-src { color: var(--accent); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; font-size: 9px; }
+/* The rule, opened. The box takes the body's place so what is being edited stays where it
+   was read, under its own selector, rather than in a pane somewhere else. */
+.webin-rule.is-editing { border-color: var(--accent); }
+.webin-rule-area { min-height: 0; margin-top: var(--space-1); }
+.webin-rule .webin-code-actions { margin-top: var(--space-2); }
+.webin-rule .webin-code-actions .webin-hint { flex: 1; font-family: var(--font-sans); }
+.webin-rule .webin-code-actions .webin-btn { font-family: var(--font-sans); }
+.webin-rule .webin-code-notes { margin-top: var(--space-2); }
 .webin-decl { min-width: 0; overflow-wrap: anywhere; color: var(--fg); }
 .webin-decl-prop { color: var(--accent); }
 .webin-decl-sep, .webin-decl-imp { color: var(--fg-dim); }

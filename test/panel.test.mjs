@@ -714,6 +714,110 @@ test('the inspector lists the CSS the site applies, as the page names the elemen
   assert.match(sh.querySelector('[data-section="styles"] .webin-section-toggle').textContent, /Styles · 3/);
 });
 
+/** A styles payload with one rule of the site's and, optionally, one of yours. */
+function stylesFixture({ own = [] } = {}) {
+  return {
+    target: 'button.buy',
+    own,
+    inline: null,
+    rules: [
+      { selector: '.buy', source: 'site.css', media: null, key: '[null,".buy"]', editable: true, ours: false, declarations: [
+        { property: 'color', value: 'blue', important: false, overridden: own.length > 0 },
+        { property: 'padding', value: '10px 18px', important: false, overridden: false },
+      ] },
+      { selector: '.md\\:flex', source: 'site.css', media: null, key: '[null,".md\\\\:flex"]', editable: false, ours: false, declarations: [
+        { property: 'display', value: 'flex', important: false, overridden: false },
+      ] },
+    ],
+    blocked: 0,
+  };
+}
+
+test('a site rule opens for editing in place, prefilled with what the site wrote', async () => {
+  const detail = selectionDetail({ id: 'el1', styles: stylesFixture() });
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: { mode: 'design', tool: 'edit', dirty: false, history: {}, unmatched: 0, selection: detail },
+  });
+  const sh = panel.shadow;
+  const pencils = [...sh.querySelectorAll('[data-action="edit-rule"]')];
+  assert.equal(pencils.length, 1, 'a selector the site stylesheet cannot carry has no pencil');
+  assert.equal(pencils[0].dataset.value, '[null,".buy"]');
+
+  const seen = [];
+  panel.on('action', (payload) => seen.push(payload));
+  pencils[0].click();
+  assert.deepEqual(seen, [{ action: 'edit-rule', value: '[null,".buy"]' }]);
+
+  // The runtime says which rule is open; the box takes the body's place, and the caret.
+  panel.setState({ ruleEdit: { key: 'el1', rule: '[null,".buy"]' } });
+  const area = sh.querySelector('[data-code="rule"]');
+  assert.ok(area, 'the rule is a box now');
+  assert.equal(area.value, 'color: blue;\npadding: 10px 18px;');
+  assert.equal(sh.querySelector('[data-rule=\'[null,".buy"]\'] [data-action="edit-rule"]'), null, 'no pencil on an open rule');
+  assert.equal(sh.activeElement, area, 'the pencil that vanished handed its focus to the box');
+
+  // Typing, then a repaint — the way clicking the page does — keeps what was typed.
+  area.value = 'color: red;\npadding: 10px 18px;';
+  area.dispatchEvent(new sh.ownerDocument.defaultView.Event('input', { bubbles: true }));
+  panel.setState({ editor: { ...panel.state.editor } });
+  assert.equal(sh.querySelector('[data-code="rule"]').value, 'color: red;\npadding: 10px 18px;');
+
+  seen.length = 0;
+  sh.querySelector('[data-action="apply-rule-css"]').click();
+  assert.deepEqual(seen, [{
+    action: 'apply-rule-css',
+    value: { selector: '.buy', media: null, base: { color: 'blue', padding: '10px 18px' }, css: 'color: red;\npadding: 10px 18px;' },
+  }], 'the text goes with the rule it is a version of, and what the site said');
+});
+
+test('an open rule belongs to the element it was opened on', async () => {
+  const detail = selectionDetail({ id: 'el1', styles: stylesFixture() });
+  const { panel } = await mountPanel({
+    view: 'edit',
+    ruleEdit: { key: 'el1', rule: '[null,".buy"]' },
+    editor: { mode: 'design', tool: 'edit', dirty: false, history: {}, unmatched: 0, selection: detail },
+  });
+  const sh = panel.shadow;
+  assert.ok(sh.querySelector('[data-code="rule"]'));
+  panel.setState({ editor: { ...panel.state.editor, selection: selectionDetail({ id: 'el2', styles: stylesFixture() }) } });
+  assert.equal(sh.querySelector('[data-code="rule"]'), null, 'a different element, so nothing is open there');
+  assert.equal(sh.querySelectorAll('[data-action="edit-rule"]').length, 1);
+});
+
+test('your version of a rule sits on top, marked as yours, with a bin beside its pencil', async () => {
+  const own = [{ selector: '.buy', source: 'yours', media: null, key: '[null,".buy"]', editable: true, ours: true, declarations: [
+    { property: 'color', value: 'red', important: false, overridden: false },
+  ] }];
+  const detail = selectionDetail({ id: 'el1', styles: stylesFixture({ own }) });
+  const { panel } = await mountPanel({
+    view: 'edit',
+    editor: { mode: 'design', tool: 'edit', dirty: false, history: {}, unmatched: 0, selection: detail },
+  });
+  const sh = panel.shadow;
+  const rules = [...sh.querySelectorAll('.webin-rule')];
+  assert.equal(rules[0].classList.contains('is-yours'), true);
+  assert.equal(rules[0].querySelector('.webin-rule-src').textContent, 'yours');
+  assert.ok(rules[0].querySelector('[data-action="remove-rule"]'));
+  assert.equal(rules[1].querySelector('[data-action="remove-rule"]'), null, 'the site\'s rule is not yours to remove');
+  assert.match(sh.querySelector('[data-section="styles"] .webin-section-toggle').textContent, /Styles · 3/);
+
+  // Opening yours shows the site's rule with your change written over it — in one box,
+  // on the site's rule, since that is what is being edited; yours keeps its bin.
+  panel.setState({ ruleEdit: { key: 'el1', rule: '[null,".buy"]' } });
+  const boxes = [...sh.querySelectorAll('[data-code="rule"]')];
+  assert.equal(boxes.length, 1, 'two rules with one selector, one box');
+  assert.equal(boxes[0].closest('.webin-rule').classList.contains('is-yours'), false);
+  assert.equal(boxes[0].value, 'color: red;\npadding: 10px 18px;');
+  assert.equal(sh.querySelectorAll('[data-action="edit-rule"]').length, 0, 'no pencil anywhere for the open selector');
+  assert.ok(sh.querySelector('.is-yours [data-action="remove-rule"]'));
+
+  const seen = [];
+  panel.on('action', (payload) => seen.push(payload));
+  sh.querySelector('[data-action="cancel-rule"]').click();
+  assert.deepEqual(seen, [{ action: 'cancel-rule', value: null }]);
+});
+
 test('a code pane keeps its draft across a repaint, and drops it once applied', async () => {
   const detail = selectionDetail({ id: 'el1' });
   const { panel } = await mountPanel({

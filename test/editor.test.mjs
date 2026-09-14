@@ -662,6 +662,103 @@ test('a stylesheet with no element edits beside it is still saved', async () => 
   assert.equal(await new EditStore(backend).sheetFor('shop.test', '/products'), '.a { color: red }');
 });
 
+/** A page with a stylesheet of its own, for editing the site's rules. */
+const STYLED = PAGE.replace('<body>', `<head><style>
+  .buy { color: blue; padding: 10px 18px; }
+  .card .buy { color: green !important; }
+  @media (max-width: 9999px) { button { padding: 4px; } }
+</style></head><body>`);
+
+async function makeStyledEditor(backend = new MemoryBackend()) {
+  const dom = makeDom(STYLED, { url: 'https://shop.test/products' });
+  stubLayout(dom, { width: 320, height: 180 });
+  const { Editor } = await import('../src/editor/editor.js');
+  const editor = new Editor({ doc: dom.window.document, view: dom.window, host: 'shop.test', editStore: new EditStore(backend) });
+  editor.enter(EditMode.DESIGN);
+  editor.select(dom.window.document.querySelector('.buy'));
+  return { editor, doc: dom.window.document, backend };
+}
+
+test('the styles list names the site\'s rules, most powerful first, and offers each for editing', async () => {
+  const { editor } = await makeStyledEditor();
+  const { styles } = editor.detail();
+  assert.equal(styles.target, 'button.buy');
+  assert.deepEqual(styles.own, [], 'nothing of yours yet');
+  assert.deepEqual(styles.rules.map((r) => r.selector), ['.card .buy', '.buy', 'button']);
+  assert.ok(styles.rules.every((r) => r.editable && typeof r.key === 'string'));
+  assert.equal(styles.rules[2].media, '(max-width: 9999px)');
+});
+
+test('editing a site rule writes only the difference, as your version of that rule', async () => {
+  const { editor } = await makeStyledEditor();
+  const before = editor.detail().styles.rules.find((r) => r.selector === '.buy');
+  const base = Object.fromEntries(before.declarations.map((d) => [d.property, d.value]));
+
+  // The text as the site wrote it, with one value changed and one line left alone.
+  const result = editor.applyRuleCss({ selector: '.buy', media: null, base }, 'color: red;\npadding: 10px 18px;');
+  assert.equal(result.ok, true);
+  assert.equal(result.written, 1, 'the untouched padding is still the site\'s');
+  assert.deepEqual(result.errors, []);
+  assert.equal(editor.siteCss(), '.buy {\n  color: red;\n}\n', 'in the site stylesheet, as text you could edit');
+  assert.equal(editor.state().dirty, true);
+
+  const { styles } = editor.detail();
+  assert.equal(styles.own.length, 1);
+  assert.equal(styles.own[0].source, 'yours');
+  assert.deepEqual(styles.own[0].declarations.map((d) => [d.property, d.value, d.overridden]), [['color', 'red', false]]);
+  const site = styles.rules.find((r) => r.selector === '.buy');
+  assert.equal(site.declarations.find((d) => d.property === 'color').overridden, true, 'the site\'s blue is struck through');
+  assert.equal(site.declarations.find((d) => d.property === 'padding').overridden, false);
+  // `.card .buy { color: green !important }` is (0,2,0); yours is `.buy` raised to (0,3,0)
+  // and important too, so it wins, and the list says so.
+  const stronger = styles.rules.find((r) => r.selector === '.card .buy');
+  assert.equal(stronger.declarations[0].overridden, true);
+});
+
+test('a rule written back to what the site said is removed again', async () => {
+  const { editor } = await makeStyledEditor();
+  const base = { color: 'blue', padding: '10px 18px' };
+  editor.applyRuleCss({ selector: '.buy', base }, 'color: red; padding: 10px 18px;');
+  assert.equal(editor.state().siteRules, 1);
+
+  editor.applyRuleCss({ selector: '.buy', base }, 'color: blue; padding: 10px 18px;');
+  assert.equal(editor.state().siteRules, 0, 'nothing left over from a change of mind');
+  assert.equal(editor.siteCss(), '');
+  assert.deepEqual(editor.detail().styles.own, []);
+});
+
+test('a rule at a breakpoint is your version at that breakpoint', async () => {
+  const { editor } = await makeStyledEditor();
+  const result = editor.applyRuleCss({ selector: 'button', media: '(max-width: 9999px)', base: { padding: '4px' } }, 'padding: 6px;');
+  assert.equal(result.written, 1);
+  assert.match(editor.siteCss(), /@media \(max-width: 9999px\) \{\n {2}button \{\n {4}padding: 6px;\n {2}\}\n\}/);
+  const own = editor.detail().styles.own;
+  assert.equal(own.length, 1);
+  assert.equal(own[0].media, '(max-width: 9999px)');
+});
+
+test('your version of a rule can be removed, and what is refused is named', async () => {
+  const { editor } = await makeStyledEditor();
+  const result = editor.applyRuleCss({ selector: '.buy', base: {} }, 'color: red; behavior: url(x); ');
+  assert.equal(result.written, 1);
+  assert.equal(result.errors.length, 1, 'the same gate as every widget');
+
+  editor.removeRule({ selector: '.buy', media: null });
+  assert.equal(editor.siteCss(), '');
+  assert.deepEqual(editor.detail().styles.own, []);
+});
+
+test('a rule you wrote in the code tool is in the list too, and edits through the same door', async () => {
+  const { editor } = await makeStyledEditor();
+  editor.applySiteCss('/* hand-written */\n.buy { color: red }\n.card:hover { gap: 1px }');
+  const { styles } = editor.detail();
+  assert.deepEqual(styles.own.map((r) => r.selector), ['.buy'], 'only what matches this element');
+
+  editor.applyRuleCss({ selector: '.buy', base: { color: 'blue', padding: '10px 18px' } }, 'color: pink; padding: 10px 18px;');
+  assert.equal(editor.siteCss(), '/* hand-written */\n.buy {\n  color: pink;\n}\n.card:hover { gap: 1px }',
+    'rewritten in place, the comment and the other rule untouched');
+});
+
 test('the selection walks down into the page as well as up out of it', async () => {
   const { editor, doc } = await makeEditor();
   editor.enter(EditMode.DESIGN);

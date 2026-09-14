@@ -38,9 +38,9 @@ import { overlayCss } from './overlay.js';
 import { overlayTokens } from '../ui/overlay-css.js';
 
 /** The applied styles, or nothing: a page's stylesheets can throw for reasons of their own. */
-function safeStyles(element, view) {
+function safeStyles(element, view, own) {
   try {
-    return appliedStyles(element, view);
+    return appliedStyles(element, view, own);
   } catch {
     return null;
   }
@@ -565,7 +565,7 @@ export class Editor extends Emitter {
       // What the site's own CSS says about this element, rule by rule — the browser's
       // Styles pane, in the column. Read here rather than in the model because it is
       // about the stylesheets, not the element, and is wanted fresh on every selection.
-      styles: safeStyles(element, this.#view),
+      styles: safeStyles(element, this.#view, this.#site.rules),
       hidden: this.#overrides.overrideValue(element, 'display') === 'none',
       removed: this.#overrides.isRemoved(element),
       canEditText: this.#textEditor.canEdit(element),
@@ -715,8 +715,63 @@ export class Editor extends Emitter {
    */
   applySiteCss(css) {
     const result = this.#monitor.suspend(() => this.#site.set(css));
+    this.#afterSheet();
+    return result;
+  }
+
+  /**
+   * After the site stylesheet changes. A rule can resize the selection — a wider padding
+   * moves every edge — so the marks are re-measured, and what the model remembers about
+   * the element is stale, the same as after an element edit.
+   */
+  #afterSheet() {
+    this.#model.invalidate();
+    this.#overlay?.sync();
     this.#dirty = true;
     this.emit('change');
+  }
+
+  /**
+   * Your version of one of the site's rules.
+   *
+   * The Styles list shows a rule as the site wrote it; this is what happens when it is
+   * edited there. `base` is the site's own declarations for that selector, and only what
+   * differs from them is written — see `parseDeclarations` — as a rule with the same
+   * selector and breakpoint in the site stylesheet, where it outranks the site's. Written
+   * back to exactly what the site said, the rule is removed again, so there is nothing
+   * left over from a change of mind.
+   *
+   * Not undoable, for the same reason the site stylesheet is not: it is text the user
+   * owns, and the way back from it is to edit it.
+   *
+   * @param {{selector:string, media?:string|null, base?:object}} rule the site's rule;
+   *   `media` is the bare condition, as the Styles list shows it
+   * @returns {{ok:boolean, written:number, rules:number, errors:string[]}}
+   */
+  applyRuleCss({ selector, media = null, base = {} }, css) {
+    const { properties, errors } = parseDeclarations(css, { base });
+    const result = this.#monitor.suspend(() => this.#site.setRule({
+      selector,
+      media: media ? `@media ${media}` : null,
+      properties,
+    }));
+    this.#afterSheet();
+    return {
+      ok: true,
+      written: Object.keys(properties).length,
+      rules: result.rules,
+      errors: [...errors, ...result.errors],
+    };
+  }
+
+  /** Takes your version of a rule out of the site stylesheet, leaving the site's own. */
+  removeRule({ selector, media = null }) {
+    const result = this.#monitor.suspend(() => this.#site.setRule({
+      selector,
+      media: media ? `@media ${media}` : null,
+      properties: {},
+    }));
+    this.#afterSheet();
     return result;
   }
 

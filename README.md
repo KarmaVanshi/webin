@@ -134,6 +134,16 @@ Styles pane, in the column. Four arrows beside the name step to the parent, into
 child, and sideways to the previous and next sibling, so the second card in a row is one
 press from the first rather than a climb up and a guess back down.
 
+Each of those rules can be edited where it stands. The pencil on a rule turns its body into
+a box holding the declarations as the site wrote them; change a value, add a line, press
+Apply, and what you changed becomes your version of that rule — the same selector, the same
+breakpoint — written into the site stylesheet, where it outranks the site's own. Only the
+difference is written: a line left as the site wrote it, or removed, is still the site's
+line, and a rule put back to exactly what the site said is removed again. Your rules sit at
+the top of the list marked *yours*, with the site's beaten declarations struck through
+beneath them, and each has a bin beside its pencil. The site's stylesheet is never touched —
+it is the site's — and a rule whose selector the editor could not write back has no pencil.
+
 **Enter** means done: it finishes any words you were typing, keeps them, and puts the
 editor down into the arrow. While the pencil is held the page never sees Enter at all —
 a site's own form or link cannot navigate out from under you mid-sentence — and the moment

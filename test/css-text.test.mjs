@@ -2,8 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  parseDeclarations, formatDeclarations, parseStylesheet, formatStylesheet,
-  stylesheetCss, isSafeSelector,
+  parseDeclarations, formatDeclarations, parseStylesheet, formatStylesheet, stylesheetCss, isSafeSelector, writeRule,
 } from '../src/shared/css-text.js';
 
 test('declarations round trip through text', () => {
@@ -92,4 +91,61 @@ test('injected CSS is raised above the theme, and a pseudo-element stays outside
 test('rules can be written back out as CSS someone could edit', () => {
   const { rules } = parseStylesheet('.a{color:red}');
   assert.equal(formatStylesheet(rules), '.a {\n  color: red;\n}');
+});
+
+test('against the site\'s own rule, only what differs is a change', () => {
+  // A line left as the site wrote it is still the site's line; so is a line removed. And
+  // a line the site wrote that the editor would never write — `font: inherit` — is passed
+  // over rather than refused, since nobody asked for it to be written.
+  const { properties, errors } = parseDeclarations(
+    'color: RED; padding: 3px; margin: 0; font: inherit; behavior: url(x);',
+    { base: { color: 'red', padding: '2px', gap: '1px', font: 'inherit' } },
+  );
+  assert.deepEqual(properties, { padding: '3px', margin: '0' });
+  assert.equal(errors.length, 1, 'a changed line is still held to the gate');
+  assert.match(errors[0], /behavior/);
+});
+
+test('a rule is written into the stylesheet without the rest being touched', () => {
+  const start = '/* mine */\n.x{padding:4px}\n';
+  const added = writeRule(start, { selector: '.buy', properties: { color: 'red' } });
+  assert.equal(added, '/* mine */\n.x{padding:4px}\n\n.buy {\n  color: red;\n}\n',
+    'appended, and the comment and the compact rule are exactly as they were');
+
+  const replaced = writeRule(added, { selector: '.buy', properties: { color: 'blue', gap: '1px' } });
+  assert.match(replaced, /\.buy \{\n {2}color: blue;\n {2}gap: 1px;\n\}/, 'rewritten in place');
+  assert.equal(replaced.indexOf('/* mine */'), 0);
+  assert.equal((replaced.match(/\.buy \{/g) ?? []).length, 1, 'one rule, not one per edit');
+
+  const removed = writeRule(replaced, { selector: '.buy', properties: {} });
+  assert.equal(removed, '/* mine */\n.x{padding:4px}\n', 'gone, with its blank line');
+});
+
+test('a rule added after a half-typed one is still read', () => {
+  // Appended after `.b {` it would sit inside the unfinished rule and never be parsed;
+  // so it goes in front, and the draft is left exactly as it was.
+  const text = writeRule('.b { ', { selector: '.buy', properties: { color: 'red' } });
+  assert.equal(text, '.buy {\n  color: red;\n}\n\n.b { ');
+  assert.equal(parseStylesheet(text).rules.length, 1);
+});
+
+test('a rule inside a breakpoint stays nested, and takes the block with it when it goes', () => {
+  let text = writeRule('', { selector: '.card', media: '@media (max-width: 600px)', properties: { padding: '8px' } });
+  assert.equal(text, '@media (max-width: 600px) {\n  .card {\n    padding: 8px;\n  }\n}\n');
+
+  // The same breakpoint however it was spaced is the same breakpoint.
+  text = writeRule(text, { selector: '.card', media: '@media (max-width:600px)', properties: { padding: '9px' } });
+  assert.equal((text.match(/@media/g) ?? []).length, 1);
+  assert.match(text, /\n {4}padding: 9px;\n {2}\}/);
+
+  text = writeRule(text, { selector: '.card', media: '@media (max-width: 600px)', properties: {} });
+  assert.equal(text, '', 'an emptied media block is not left behind');
+});
+
+test('a rule with the same selector at a different breakpoint is a different rule', () => {
+  let text = writeRule('', { selector: '.card', properties: { padding: '8px' } });
+  text = writeRule(text, { selector: '.card', media: '@media print', properties: { padding: '0' } });
+  const { rules } = parseStylesheet(text);
+  assert.equal(rules.length, 2);
+  assert.deepEqual(rules.map((r) => r.media), [null, '@media print']);
 });

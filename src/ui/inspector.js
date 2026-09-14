@@ -20,6 +20,7 @@ import {
   boxField, iconButton, button, readonlyRow, emptyState,
 } from './controls.js';
 import { contrastRatio, parseColor } from '../shared/color.js';
+import { formatDeclarations } from '../shared/css-text.js';
 
 const ALIGNMENTS = [
   { value: 'left', label: 'Left' },
@@ -144,7 +145,40 @@ function selectionHead(detail) {
 }
 
 /**
- * The CSS the site applies to the selection, as a browser's Styles pane lists it.
+ * One rule from the Styles list, as text you could edit.
+ *
+ * The site's declarations for that selector and breakpoint, with your own written over
+ * them: a value you have already changed shows as you changed it, a property you added
+ * comes last. Where the site declares the same selector twice the two are folded together,
+ * the more powerful winning, so what you see is one rule and what you write back is a
+ * difference from exactly that. `base` is what the difference is taken against.
+ *
+ * @returns {{selector:string, media:string|null, base:object, own:object, text:string}|null}
+ */
+export function editableRule(styles, key) {
+  if (!styles || !key) return null;
+  const site = (styles.rules ?? []).filter((r) => r.key === key);
+  const own = (styles.own ?? []).find((r) => r.key === key) ?? null;
+  const first = site[0] ?? own;
+  if (!first) return null;
+  const base = {};
+  // Least powerful first, so the value that reaches the page is the one that stays.
+  for (const rule of [...site].reverse()) {
+    for (const d of rule.declarations) base[d.property] = d.value;
+  }
+  const mine = Object.fromEntries((own?.declarations ?? []).map((d) => [d.property, d.value]));
+  return {
+    selector: first.selector,
+    media: first.media ?? null,
+    base,
+    own: mine,
+    text: formatDeclarations({ ...base, ...mine }),
+  };
+}
+
+/**
+ * The CSS the site applies to the selection, as a browser's Styles pane lists it — and
+ * yours over it.
  *
  * The rows above say what each property computes to; this says where it came from. The
  * element is named the way the page named it — `button#cta.primary` — and every matching
@@ -153,26 +187,78 @@ function selectionHead(detail) {
  * colour together, never the colour alone, since a reader who cannot see the dimming
  * still has the line through the words.
  *
- * Only the site's CSS. What Webin has changed is shown in the rows, marked as yours.
+ * Any rule the site stylesheet could carry has a pencil. Pressed, the rule's body becomes
+ * a box holding the declarations as the site wrote them, and what you change is written
+ * into the site stylesheet as your version of that rule — same selector, same breakpoint,
+ * only the lines that differ. Your rules sit at the top, marked as yours, with the site's
+ * beaten declarations struck through beneath them, and each has a bin as well as a pencil.
+ *
+ * @param {object} styles from `appliedStyles`
+ * @param {{editing?:string|null, draft?:string|null, errors?:string[], status?:string|null}} view
+ *   which rule is open for editing, what has been typed into it, and what the last apply said
  */
-export function stylesBlock(styles) {
+export function stylesBlock(styles, view = {}) {
   if (!styles) return '';
   const decl = (d) => `<div class="webin-decl${d.overridden ? ' is-overridden' : ''}"${d.overridden ? ' title="Overridden by a stronger rule"' : ''}>
       <span class="webin-decl-prop">${escapeHtml(d.property)}</span><span class="webin-decl-sep">: </span><span class="webin-decl-val">${escapeHtml(d.value)}</span>${d.important ? '<span class="webin-decl-imp"> !important</span>' : ''};</div>`;
-  const rule = (r) => `<div class="webin-rule">
+
+  const editor = (r) => {
+    const text = view.draft ?? editableRule(styles, r.key)?.text ?? '';
+    // As tall as the rule, plus a line to add one, so a six-line rule is read whole rather
+    // than three lines at a time behind a scrollbar. Capped, since a site's rule can be
+    // anything and the column is not.
+    const rows = Math.min(Math.max(text.split('\n').length + 1, 3), 14);
+    return `
+    <textarea class="webin-code-area webin-rule-area" data-interactive data-code="rule" spellcheck="false"
+      rows="${rows}" aria-label="Your version of the rule ${escapeHtml(r.selector)}">${escapeHtml(text)}</textarea>
+    ${codeNotes(view.errors)}
+    <div class="webin-code-actions">
+      <span class="webin-hint">${view.status
+        ? `<span class="webin-code-status" role="status">${escapeHtml(view.status)}</span>`
+        : 'Only what you change is written'}</span>
+      ${button({ label: 'Cancel', action: 'cancel-rule' })}
+      ${button({ label: 'Apply', action: 'apply-rule-css', variant: 'primary' })}
+    </div>`;
+  };
+
+  // Your version of a site rule shares its key with the site's, so the box opens in one
+  // place only: on the site's rule where there is one, since that is what is being
+  // edited, and on yours when yours is the only rule with that selector.
+  const host = view.editing
+    ? (styles.rules.find((r) => r.key === view.editing) ?? (styles.own ?? []).find((r) => r.key === view.editing) ?? null)
+    : null;
+
+  const rule = (r) => {
+    const editing = host !== null && r === host;
+    const acts = [];
+    if (r.editable && Boolean(r.key) && r.key !== view.editing) {
+      acts.push(iconButton({
+        name: 'pencil',
+        action: 'edit-rule',
+        value: r.key,
+        title: r.ours ? 'Edit your version of this rule' : 'Edit this rule — what you change outranks the site',
+      }));
+    }
+    if (r.ours) {
+      acts.push(iconButton({ name: 'trash', action: 'remove-rule', value: r.key, title: 'Remove your version of this rule', danger: true }));
+    }
+    return `<div class="webin-rule${r.ours ? ' is-yours' : ''}${editing ? ' is-editing' : ''}"${r.key ? ` data-rule="${escapeHtml(r.key)}"` : ''}>
     <div class="webin-rule-head">
       <span class="webin-rule-sel">${escapeHtml(r.selector)}</span>
       <span class="webin-rule-src" title="${escapeHtml(r.media ? `${r.media} · ${r.source}` : r.source)}">${escapeHtml(r.source)}</span>
+      ${acts.length ? `<span class="webin-rule-acts">${acts.join('')}</span>` : ''}
     </div>
     ${r.media ? `<div class="webin-rule-media">${escapeHtml(r.media)}</div>` : ''}
-    <div class="webin-rule-body">${r.declarations.map(decl).join('')}</div>
+    ${editing ? editor(r) : `<div class="webin-rule-body">${r.declarations.map(decl).join('')}</div>`}
   </div>`;
+  };
 
+  const own = (styles.own ?? []).map(rule).join('');
   const inline = styles.inline?.length
-    ? rule({ selector: 'element.style', source: 'inline', media: null, declarations: styles.inline })
+    ? rule({ selector: 'element.style', source: 'inline', media: null, key: null, editable: false, declarations: styles.inline })
     : '';
   const rules = styles.rules.map(rule).join('');
-  const empty = !inline && !rules
+  const empty = !own && !inline && !rules
     ? `<p class="webin-styles-empty">${styles.blocked
       ? 'The stylesheets that style this element are cross-origin, so their rules cannot be read.'
       : 'No site rule matches this element; everything it shows is inherited or the browser\'s own.'}</p>`
@@ -183,18 +269,35 @@ export function stylesBlock(styles) {
   return `
 <div class="webin-styles">
   <code class="webin-styles-target" title="This element, as the page names it">${escapeHtml(styles.target)}</code>
-  ${inline}${rules}${empty}${note}
+  ${own}${inline}${rules}${empty}${note}
 </div>`;
 }
 
-function stylesSection(detail, open) {
+/**
+ * What the Styles block needs to know about the panel: which rule is open, for which
+ * element, and what has been said about it. An open rule belongs to the element it was
+ * opened on; select something else and it is simply not open there.
+ */
+function stylesView(detail, view) {
+  const open = view.ruleEdit && view.ruleEdit.key === (detail?.id ?? null) ? view.ruleEdit.rule : null;
+  const draft = view.drafts?.rule;
+  return {
+    editing: open,
+    draft: open && draft && draft.key === `${detail?.id ?? ''}|${open}` ? draft.text : null,
+    errors: open ? (view.codeErrors?.rule ?? []) : [],
+    status: open ? (view.codeStatus?.rule ?? null) : null,
+  };
+}
+
+function stylesSection(detail, open, view) {
   if (!detail.styles) return '';
-  const count = detail.styles.rules.length + (detail.styles.inline?.length ? 1 : 0);
+  const { styles } = detail;
+  const count = (styles.own?.length ?? 0) + styles.rules.length + (styles.inline?.length ? 1 : 0);
   return section({
     id: 'styles',
     title: count ? `Styles · ${count}` : 'Styles',
     open,
-    body: stylesBlock(detail.styles),
+    body: stylesBlock(styles, stylesView(detail, view)),
   });
 }
 
@@ -403,7 +506,7 @@ function codeView(detail, view) {
     ${detail?.styles ? `
     <details class="webin-code-ref"${view.sections?.styles === false ? '' : ' open'}>
       <summary class="webin-code-ref-head">What the site already applies</summary>
-      ${stylesBlock(detail.styles)}
+      ${stylesBlock(detail.styles, stylesView(detail, view))}
     </details>` : ''}`
     : `<p class="webin-code-empty">Click something on the page to write CSS for it.</p>`}
   </section>
@@ -463,7 +566,7 @@ export function renderInspector(detail, view = {}) {
   return [
     tools,
     selectionHead(detail),
-    stylesSection(detail, open.styles ?? true),
+    stylesSection(detail, open.styles ?? true, view),
     layoutSection(detail, open.layout ?? false),
     spacingSection(detail, open.spacing ?? true, linked),
     typeSection(detail, open.type ?? true),

@@ -14,7 +14,7 @@
 
 import { SheetRegistry } from '../content/sheets.js';
 import { collectShadowRoots } from '../content/dom.js';
-import { parseStylesheet, stylesheetCss, SHEET_LIMIT } from '../shared/css-text.js';
+import { parseStylesheet, stylesheetCss, writeRule, SHEET_LIMIT } from '../shared/css-text.js';
 
 /** Names the fallback `<style>`, so it can be told from the override sheet's. */
 const STYLE_ID = 'webin-site-css';
@@ -72,6 +72,24 @@ export class SiteStylesheet {
     this.#rules = rules;
     this.#render();
     return { rules: rules.length, errors };
+  }
+
+  /**
+   * Writes one rule into the stylesheet, leaving the rest of the text as typed.
+   *
+   * This is how a rule edited from the inspector's Styles list gets here: the same selector
+   * and media query the site used, and only the declarations that differ from the site's.
+   * An existing rule with that selector is rewritten in place; no declarations at all
+   * means the rule is removed. See `writeRule`.
+   *
+   * @returns {{rules:number, errors:string[]}}
+   */
+  setRule(rule) {
+    const next = writeRule(this.#text, rule);
+    if (next.length > SHEET_LIMIT) {
+      return { rules: this.#rules.length, errors: [`The site stylesheet is full (${SHEET_LIMIT.toLocaleString()} characters).`] };
+    }
+    return this.set(next);
   }
 
   /** Empties the sheet without tearing it down. */

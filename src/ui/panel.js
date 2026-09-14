@@ -19,7 +19,7 @@ import { IMAGE_ACCEPT, ImageError, readImageFile } from '../shared/image.js';
 import { GROUPS } from '../themes/library.js';
 import { panelCss } from './panel-css.js';
 import { icon } from './icons.js';
-import { renderInspector, renderEditorBar } from './inspector.js';
+import { renderInspector, renderEditorBar, editableRule } from './inspector.js';
 
 /**
  * Colours reach the DOM inside `style` attributes, so they are filtered down to the
@@ -56,7 +56,10 @@ export class Panel extends Emitter {
    * *applied* text back and throw the draft away. So the draft is kept here and drawn
    * back in, until it is applied or, for the element pane, until the selection moves on.
    */
-  #drafts = { element: null, site: null };
+  #drafts = { element: null, site: null, rule: null };
+
+  /** A field the last press asked for, to be focused once it exists. */
+  #wanted = null;
   #state = {
     host: '',
     themes: [],
@@ -284,13 +287,21 @@ export class Panel extends Emitter {
     // A field the user was in keeps the caret; a field that has just appeared takes it, so
     // opening the rename sheet lands you in the name rather than one Tab away from it.
     // Reconciling means the first case usually needs nothing done to it — the field was
-    // never removed — but a change of view really does build new controls.
-    const restore = focused
+    // never removed — but a change of view really does build new controls. A press that
+    // asked for a field — the pencil on a rule — is honoured the same way, by name, since
+    // a button does not reliably hold focus after a click (Safari) for it to be inherited.
+    // One repaint's worth of asking: the press is answered synchronously, so if the field
+    // is not here now it is not coming, and a later one should not inherit the request.
+    const asked = this.#wanted ? this.#root.querySelector(this.#wanted) : null;
+    this.#wanted = null;
+    const restore = asked ?? (focused
       ? this.#root.querySelector(focused)
-      : (staying ? null : this.#root.querySelector('[data-autofocus]'));
+      : (staying ? null : this.#root.querySelector('[data-autofocus]')));
     if (restore && restore !== this.#shadow?.activeElement) {
       restore.focus({ preventScroll: true });
-      if (!focused && typeof restore.select === 'function') restore.select();
+      // A name to replace is selected whole; a rule to edit is not — one value in it is
+      // what you came for, and a caret is what you need for that.
+      if (!focused && !asked && typeof restore.select === 'function') restore.select();
     }
   }
 
@@ -391,19 +402,40 @@ export class Panel extends Emitter {
     // button that applies one has to go and fetch it. Read at the moment of the press, not
     // on every keystroke: what is in the box until then is a draft.
     const action = trigger.dataset.action;
-    const scope = action === 'apply-element-css' ? 'element' : action === 'apply-site-css' ? 'site' : null;
+    const scope = action === 'apply-element-css' ? 'element'
+      : action === 'apply-site-css' ? 'site'
+        : action === 'apply-rule-css' ? 'rule' : null;
     if (scope) {
       this.#applyCode(scope);
       return;
     }
+    // Opening a rule, or closing one, is the end of whatever was being typed in one; and
+    // opening one is asking for the box, so the box gets the caret when it appears.
+    if (action === 'edit-rule' || action === 'cancel-rule') this.#drafts.rule = null;
+    if (action === 'edit-rule') this.#wanted = '[data-code="rule"]';
 
     this.emit('action', { action, value: trigger.dataset.value ?? null });
   };
 
-  /** Hands a code pane's text to the runtime. Applied text is no longer a draft. */
+  /**
+   * Hands a code pane's text to the runtime. Applied text is no longer a draft.
+   *
+   * A rule from the Styles list goes with the rule it is a version of — selector,
+   * breakpoint, and the site's own declarations — since only what differs from those is
+   * written, and the panel is where both halves are in view.
+   */
   #applyCode(scope) {
     const area = this.#shadow?.querySelector(`[data-code="${scope}"]`);
     this.#drafts[scope] = null;
+    if (scope === 'rule') {
+      const rule = editableRule(this.#state.editor?.selection?.styles, this.#state.ruleEdit?.rule);
+      if (!rule) return;
+      this.emit('action', {
+        action: 'apply-rule-css',
+        value: { selector: rule.selector, media: rule.media, base: rule.base, css: area?.value ?? '' },
+      });
+      return;
+    }
     this.emit('action', { action: `apply-${scope}-css`, value: area?.value ?? '' });
   }
 
@@ -411,9 +443,12 @@ export class Panel extends Emitter {
   #keepDraft(area) {
     const scope = area?.dataset?.code;
     if (!scope) return;
+    const id = this.#state.editor?.selection?.id ?? null;
     this.#drafts[scope] = {
       text: area.value,
-      key: scope === 'element' ? (this.#state.editor?.selection?.id ?? null) : null,
+      key: scope === 'element' ? id
+        : scope === 'rule' ? `${id ?? ''}|${this.#state.ruleEdit?.rule ?? ''}`
+          : null,
     };
   }
 
@@ -903,7 +938,7 @@ function matchChildren(current, next) {
  * appearing above the body is not the body, and matching by position alone would have
  * patched one into the other and shifted everything below.
  */
-const IDENTITY = ['data-control', 'data-prop', 'data-side', 'data-action', 'data-section', 'type'];
+const IDENTITY = ['data-control', 'data-prop', 'data-side', 'data-action', 'data-section', 'data-rule', 'type'];
 
 const baseClass = (node) => (node.getAttribute('class') ?? '').trim().split(/\s+/)[0] ?? '';
 

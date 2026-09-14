@@ -73,6 +73,10 @@ click selects, and every control changes the page. The arrow puts it down again 
 is highlighted or selected and the site is yours to read and click through. Enter finishes
 what you were typing and puts the editor down.
 
+The inspector also lists the CSS the site itself applies to what you picked, rule by rule,
+as a browser's Styles pane does — and each rule can be edited right there. Change a value
+and your version of the rule takes over, the site's own line struck through beneath it.
+
 Nothing is written into the website. Your changes live in a stylesheet of Webin's own, and
 resetting removes every trace of them.
 

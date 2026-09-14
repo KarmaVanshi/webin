@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="icons/icon128.png" alt="Webin" width="128" height="128">
+</div>
+
 # Webin — restyle any website
 
 A Chrome extension that re-skins a website in one click, lets you change any single thing

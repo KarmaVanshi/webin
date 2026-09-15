@@ -1,6 +1,14 @@
-# Ignore everything
+# Public branch: only what the store listing needs
 *
-
-# Except PRIVACY.md
-!PRIVACY.md
 !.gitignore
+!PRIVACY.md
+!README.md
+
+# The README icon
+!icons/
+icons/*
+!icons/icon128.png
+
+# Never publish these
+docs/
+attic/
